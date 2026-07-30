@@ -52,6 +52,23 @@ APIMart 点此链接 [https://apimart.ai/register?aff=fWMrEv](https://apimart.ai
 
 ## 快速开始
 
+### 双击启动（推荐新手）
+
+项目提供 Windows 和 macOS 双击入口。首次使用会检查 Docker Desktop；未安装时会提供自动安装或下载引导。
+
+| 系统 | 启动或打开 | 停止服务 |
+| --- | --- | --- |
+| Windows | 打开 `Windows用户` 文件夹，双击 `启动AI创作工作台.bat` | 双击 `停止AI创作工作台.bat` |
+| macOS | 打开 `Mac用户` 文件夹，双击 `启动AI创作工作台.command` | 双击 `停止AI创作工作台.command` |
+
+- 启动入口可重复使用：未运行时启动服务，已经运行时直接打开网页。
+- 默认从 `3001` 开始自动寻找空闲端口，端口冲突不需要手动处理。
+- 首次构建可能需要几分钟，后续启动会明显更快。
+- 停止服务不会删除画布、数据库或素材。
+- macOS 首次运行若被系统拦截，请右键启动文件并选择“打开”。
+
+### 命令行启动
+
 ```bash
 git clone https://github.com/tigerowo/infinite-canvas.git
 cd infinite-canvas

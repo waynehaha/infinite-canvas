@@ -1,0 +1,13 @@
+services:
+  app:
+    image: infinite-canvas:desktop
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "127.0.0.1:${INFINITE_CANVAS_PORT:-3001}:3000"
+    restart: "no"
