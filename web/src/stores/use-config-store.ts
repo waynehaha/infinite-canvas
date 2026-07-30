@@ -6,6 +6,7 @@ import { persist } from "zustand/middleware";
 
 import { apiGet } from "@/services/api/request";
 import type { AdminPublicSettings } from "@/services/api/admin";
+import { AIHUB_BASE_URL, AIHUB_DEFAULT_MODEL, AIHUB_DEFAULT_MODELS, aihubModelCapability } from "@/lib/aihub-models";
 import { useUserStore } from "@/stores/use-user-store";
 
 export type LocalModelChannel = {
@@ -16,18 +17,7 @@ export type LocalModelChannel = {
     models: string[];
 };
 
-export const AIHUB_BASE_URL = "https://aihubcc.cc/v1";
-export const AIHUB_DEFAULT_MODELS = [
-    "gemini-3.5-flash",
-    "gemini-3.1-pro",
-    "gemini-3.1-flash-lite",
-    "gpt-image-2",
-    "gpt-image-2-1k",
-    "grok-imagine-image",
-    "omni-fast",
-    "grok-imagine-video",
-    "grok-imagine-video-1.5-preview",
-];
+export { AIHUB_BASE_URL, AIHUB_DEFAULT_MODELS } from "@/lib/aihub-models";
 const AIHUB_DEFAULT_CHANNEL: LocalModelChannel = {
     id: "aihub",
     name: "AIHub",
@@ -35,6 +25,7 @@ const AIHUB_DEFAULT_CHANNEL: LocalModelChannel = {
     apiKey: "",
     models: AIHUB_DEFAULT_MODELS,
 };
+const AIHUB_LEGACY_DEFAULT_MODELS = ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite", "gpt-image-2", "gpt-image-2-1k", "grok-imagine-image", "omni-fast", "grok-imagine-video", "grok-imagine-video-1.5-preview"];
 
 export type VideoMultiPromptItem = { prompt: string; duration: string };
 export type VideoElementReference = { id: string; kind: "image" | "video" | "audio"; name: string; type: string; dataUrl?: string; url?: string; storageKey?: string; bytes?: number; width?: number; height?: number; durationMs?: number };
@@ -106,11 +97,11 @@ export const defaultConfig: AiConfig = {
     channelMode: "local",
     baseUrl: AIHUB_BASE_URL,
     apiKey: "",
-    model: "gemini-3.5-flash",
-    imageModel: "gpt-image-2",
-    videoModel: "omni-fast",
-    textModel: "gemini-3.5-flash",
-    audioModel: "gpt-4o-mini-tts",
+    model: AIHUB_DEFAULT_MODEL.text,
+    imageModel: AIHUB_DEFAULT_MODEL.image,
+    videoModel: AIHUB_DEFAULT_MODEL.video,
+    textModel: AIHUB_DEFAULT_MODEL.text,
+    audioModel: AIHUB_DEFAULT_MODEL.audio,
     audioVoice: "alloy",
     audioFormat: "mp3",
     audioSpeed: "1",
@@ -128,10 +119,10 @@ export const defaultConfig: AiConfig = {
     videoCharacterOrientation: "video",
     systemPrompt: "",
     models: AIHUB_DEFAULT_MODELS,
-    imageModels: ["gpt-image-2", "gpt-image-2-1k", "grok-imagine-image"],
-    videoModels: ["omni-fast", "grok-imagine-video", "grok-imagine-video-1.5-preview"],
-    textModels: ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite"],
-    audioModels: [],
+    imageModels: [...AIHUB_DEFAULT_MODELS.filter((model) => aihubModelCapability(model) === "image")],
+    videoModels: [...AIHUB_DEFAULT_MODELS.filter((model) => aihubModelCapability(model) === "video")],
+    textModels: [...AIHUB_DEFAULT_MODELS.filter((model) => aihubModelCapability(model) === "text")],
+    audioModels: [...AIHUB_DEFAULT_MODELS.filter((model) => aihubModelCapability(model) === "audio")],
     quality: "auto",
     size: "1:1",
     videoSize: "1280x720",
@@ -267,44 +258,59 @@ function isVideoModelName(model: string) {
 
 function isImageModelName(model: string) {
     const value = model.toLowerCase();
-    return !isVideoModelName(model) && !isAudioModelName(model) && (
-        value.includes("image") ||
-        value.includes("nano-banana") ||
-        value.includes("seedream") ||
-        value.includes("gpt-image") ||
-        value.includes("dall-e") ||
-        value.includes("dalle") ||
-        value.includes("imagen") ||
-        value.includes("gemini-2.5-flash") ||
-        value.includes("gemini-3-pro") ||
-        value.includes("gemini-3.1-flash") ||
-        value.includes("flux") ||
-        value.includes("kontext") ||
-        value.includes("4o-image") ||
-        value.includes("4o image") ||
-        value.includes("gpt-4o-image") ||
-        value.includes("z-image") ||
-        value.includes("qwen/image") ||
-        value.includes("qwen2/image") ||
-        value.includes("qwen/text-to-image") ||
-        value.includes("qwen2/text-to-image") ||
-        value.includes("ideogram") ||
-        value.includes("recraft") ||
-        value.includes("sdxl") ||
-        value.includes("stable-diffusion") ||
-        value.includes("midjourney") ||
-        value.includes("wan2-7-image") ||
-        value.includes("wan2.7-image") ||
-        value.includes("wan/2-7-image") ||
-        value.includes("topaz/image") ||
-        value.includes("gemini-omni-character") ||
-        (value.includes("grok-imagine") && !value.includes("video"))
+    return (
+        !isVideoModelName(model) &&
+        !isAudioModelName(model) &&
+        (value.includes("image") ||
+            value.includes("nano-banana") ||
+            value.includes("seedream") ||
+            value.includes("gpt-image") ||
+            value.includes("dall-e") ||
+            value.includes("dalle") ||
+            value.includes("imagen") ||
+            value.includes("gemini-2.5-flash") ||
+            value.includes("gemini-3-pro") ||
+            value.includes("gemini-3.1-flash") ||
+            value.includes("flux") ||
+            value.includes("kontext") ||
+            value.includes("4o-image") ||
+            value.includes("4o image") ||
+            value.includes("gpt-4o-image") ||
+            value.includes("z-image") ||
+            value.includes("qwen/image") ||
+            value.includes("qwen2/image") ||
+            value.includes("qwen/text-to-image") ||
+            value.includes("qwen2/text-to-image") ||
+            value.includes("ideogram") ||
+            value.includes("recraft") ||
+            value.includes("sdxl") ||
+            value.includes("stable-diffusion") ||
+            value.includes("midjourney") ||
+            value.includes("wan2-7-image") ||
+            value.includes("wan2.7-image") ||
+            value.includes("wan/2-7-image") ||
+            value.includes("topaz/image") ||
+            value.includes("gemini-omni-character") ||
+            (value.includes("grok-imagine") && !value.includes("video")))
     );
 }
 
 function isAudioModelName(model: string) {
     const value = model.toLowerCase();
-    return value.includes("audio") || value.includes("tts") || value.includes("speech") || value.includes("voice") || value.includes("music") || value.includes("sound") || value.includes("elevenlabs") || value.includes("suno") || value.includes("lyrics") || value.includes("vocal") || value.includes("midi") || value.includes("wav");
+    return (
+        value.includes("audio") ||
+        value.includes("tts") ||
+        value.includes("speech") ||
+        value.includes("voice") ||
+        value.includes("music") ||
+        value.includes("sound") ||
+        value.includes("elevenlabs") ||
+        value.includes("suno") ||
+        value.includes("lyrics") ||
+        value.includes("vocal") ||
+        value.includes("midi") ||
+        value.includes("wav")
+    );
 }
 
 function isTextModelName(model: string) {
@@ -313,6 +319,8 @@ function isTextModelName(model: string) {
 
 export function modelMatchesCapability(model: string, capability?: ModelCapability) {
     if (!capability) return true;
+    const aihubCapability = aihubModelCapability(model);
+    if (aihubCapability) return aihubCapability === capability;
     if (capability === "image") return isImageModelName(model);
     if (capability === "video") return isVideoModelName(model);
     if (capability === "audio") return isAudioModelName(model);
@@ -370,6 +378,10 @@ export const useConfigStore = create<ConfigStore>()(
                 const config = { ...defaultConfig, ...persistedConfig };
                 const localChannels = normalizeLocalChannels(config);
                 const localModels = normalizeModelList(localChannels.flatMap((channel) => channel.models));
+                const imageModels = filterModelsByCapability(localModels, "image");
+                const videoModels = filterModelsByCapability(localModels, "video");
+                const textModels = filterModelsByCapability(localModels, "text");
+                const audioModels = filterModelsByCapability(localModels, "audio");
                 return {
                     ...current,
                     config: {
@@ -386,10 +398,10 @@ export const useConfigStore = create<ConfigStore>()(
                         syncModelConfig: config.syncModelConfig === true,
                         syncStorageConfig: config.syncStorageConfig === true,
                         channelMode: config.channelMode || "remote",
-                        imageModel: config.imageModel || config.model,
-                        videoModel: config.videoModel || "grok-imagine-video",
-                        textModel: config.textModel || config.model,
-                        audioModel: config.audioModel || defaultConfig.audioModel,
+                        imageModel: imageModels.includes(config.imageModel) ? config.imageModel : imageModels[0] || "",
+                        videoModel: videoModels.includes(config.videoModel) ? config.videoModel : videoModels[0] || "",
+                        textModel: textModels.includes(config.textModel) ? config.textModel : textModels[0] || "",
+                        audioModel: audioModels.includes(config.audioModel) ? config.audioModel : audioModels[0] || "",
                         audioVoice: config.audioVoice || defaultConfig.audioVoice,
                         audioFormat: config.audioFormat || defaultConfig.audioFormat,
                         audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
@@ -407,10 +419,10 @@ export const useConfigStore = create<ConfigStore>()(
                         videoWatermark: config.videoWatermark || "false",
                         videoCharacterOrientation: config.videoCharacterOrientation === "image" ? "image" : "video",
                         canvasImageCount: config.canvasImageCount || "1",
-                        imageModels: filterModelsByCapability(localModels, "image"),
-                        videoModels: filterModelsByCapability(localModels, "video"),
-                        textModels: filterModelsByCapability(localModels, "text"),
-                        audioModels: filterModelsByCapability(localModels, "audio"),
+                        imageModels,
+                        videoModels,
+                        textModels,
+                        audioModels,
                     },
                 };
             },
@@ -461,17 +473,27 @@ export function normalizeLocalChannels(config: Partial<AiConfig>) {
     const channels = Array.isArray(config.localChannels) ? config.localChannels : [];
     const legacyEmptyConfig = !channels.length && !config.apiKey && !(config.models || []).length && (!config.baseUrl || config.baseUrl === "https://api.openai.com");
     if (legacyEmptyConfig) return [{ ...AIHUB_DEFAULT_CHANNEL, models: [...AIHUB_DEFAULT_CHANNEL.models] }];
-    const normalized = channels.map((channel, index) => ({
-        id: channel.id || `local-${index + 1}`,
-        name: typeof channel.name === "string" ? channel.name : `本地渠道 ${index + 1}`,
-        baseUrl: channel.baseUrl || "",
-        apiKey: channel.apiKey || "",
-        models: Array.isArray(channel.models) ? channel.models.filter(Boolean) : [],
-    }));
+    const normalized = channels.map((channel, index) => {
+        const models = Array.isArray(channel.models) ? channel.models.filter(Boolean) : [];
+        const managedAIHub = channel.id === "aihub" && sameModelSet(models, AIHUB_LEGACY_DEFAULT_MODELS);
+        return {
+            id: channel.id || `local-${index + 1}`,
+            name: typeof channel.name === "string" ? channel.name : `本地渠道 ${index + 1}`,
+            baseUrl: channel.baseUrl || "",
+            apiKey: channel.apiKey || "",
+            models: managedAIHub ? [...AIHUB_DEFAULT_MODELS] : models,
+        };
+    });
     if (!normalized.length) {
         normalized.push({ id: "local-default", name: "本地直连", baseUrl: config.baseUrl || defaultConfig.baseUrl, apiKey: config.apiKey || "", models: Array.isArray(config.models) ? config.models.filter(Boolean) : [] });
     }
     return normalized;
+}
+
+function sameModelSet(left: string[], right: string[]) {
+    if (left.length !== right.length) return false;
+    const values = new Set(left);
+    return right.every((model) => values.has(model));
 }
 
 export function channelIdForActiveModel(config: AiConfig) {

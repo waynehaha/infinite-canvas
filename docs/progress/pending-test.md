@@ -7,10 +7,14 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 ## AIHub 默认渠道
 
-- 新用户默认提供 `AIHub` 渠道，Base URL 为 `https://aihubcc.cc/v1`，填写个人 API Key 后即可使用预置模型。
-- 默认模型按文本、图片和视频分类，默认分别使用 `gemini-3.5-flash`、`gpt-image-2` 和 `omni-fast`。
-- AIHub 图生图使用平台实际参考图字段；`omni-fast`、Grok 视频及 GPT Image 高清异步模型按各自接口参数提交。
-- 旧版未配置过任何模型渠道的浏览器会自动升级到 AIHub 默认渠道，已有自定义渠道保持不变。
+- 新用户默认提供 `AIHub` 渠道，填写一个个人 API Key 后即可使用定价页当前公布的 35 个预置模型。
+- 模型按文本、图片、视频和音乐分类，默认分别使用 `gemini-3.5-flash`、`gpt-image-2`、`omni-fast` 和 `gemini-music`。
+- GPT Image 同步生图、multipart 图片编辑及 2K/3.5K 异步生图已按模型协议区分。
+- Gemini 图片和 Chat 生图模型使用各自参考图字段与结果结构。
+- Omni 支持单图、多图、V2V、双视频和相对下载地址；Seedance 支持 4～15 秒及图片、视频、音频和首尾帧约束；Veo-Clean 使用视频文件上传。
+- `gemini-music` 使用 Chat Completions 生成音乐，并支持画布音频任务识别返回的音频地址。
+- 旧 AIHub 默认模型列表会自动更新；已有自定义渠道及自行维护的模型列表保持不变。
+- Grok 当前未出现在定价页，因此不再作为默认模型；已有兼容逻辑保留。
 
 ## 桌面双击启动
 

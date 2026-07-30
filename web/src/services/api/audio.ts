@@ -1,8 +1,9 @@
 import axios from "axios";
 
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { createAIHubMusicBody, extractAIHubAudioSource, isAIHubMusicModel } from "@/services/api/aihub/audio";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { buildApiUrl, channelIdForActiveModel, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
 export type CanvasAudioTask = {
@@ -68,6 +69,19 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string): 
     const instructions = config.audioInstructions.trim();
 
     try {
+        if (isAIHubConfig(config) && isAIHubMusicModel(model)) {
+            const response = await fetch(aiApiUrl(config, "/chat/completions"), { method: "POST", headers: aiHeaders(config), body: JSON.stringify(createAIHubMusicBody(model, prompt)) });
+            if (!response.ok) throw new Error(await readFetchError(response, "音乐生成失败"));
+            const payload = await response.json();
+            const source = extractAIHubAudioSource(payload);
+            if (!source) throw new Error("音乐接口没有返回音频地址");
+            const audioResponse = await fetch(source);
+            if (!audioResponse.ok) throw new Error(`音乐文件下载失败（${audioResponse.status}）`);
+            const blob = await audioResponse.blob();
+            if (!blob.type.startsWith("audio/")) throw new Error("音乐接口返回的文件不是音频");
+            refreshRemoteUser(config);
+            return blob;
+        }
         const response = await axios.post<Blob>(
             aiApiUrl(config, "/audio/speech"),
             {
@@ -99,23 +113,28 @@ export async function createCanvasAudioTask(config: AiConfig, prompt: string, op
     assertAudioConfig(config, model);
     const format = normalizeAudioFormatValue(config.audioFormat);
     const instructions = config.audioInstructions.trim();
+    const music = isAIHubConfig(config) && isAIHubMusicModel(model);
+    const endpoint = music ? "/chat/completions" : "/audio/speech";
+    const request = music
+        ? createAIHubMusicBody(model, prompt)
+        : {
+              model,
+              input: prompt,
+              voice: normalizeAudioVoiceValue(config.audioVoice),
+              response_format: format,
+              speed: Number(normalizeAudioSpeedValue(config.audioSpeed)),
+              ...(instructions ? { instructions } : {}),
+          };
     const response = await fetch("/api/v1/canvas/audio-tasks", {
         method: "POST",
         headers: aiHeaders(config),
         body: JSON.stringify({
-            endpoint: "/audio/speech",
+            endpoint,
             nodeId: options.nodeId || "",
             sourceId: options.sourceId || "",
             clientTaskId: options.clientTaskId || "",
             prompt,
-            request: {
-                model,
-                input: prompt,
-                voice: normalizeAudioVoiceValue(config.audioVoice),
-                response_format: format,
-                speed: Number(normalizeAudioSpeedValue(config.audioSpeed)),
-                ...(instructions ? { instructions } : {}),
-            },
+            request,
         }),
     });
     if (!response.ok) throw new Error(await readFetchError(response, "音频任务创建失败"));

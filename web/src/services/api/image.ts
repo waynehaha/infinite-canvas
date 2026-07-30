@@ -1,6 +1,9 @@
 import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
+import { isAIHubAsyncImageModel, isAIHubChatImageModel } from "@/lib/aihub-models";
+import { createAIHubChatImageBody, createAIHubImageEditForm, createAIHubImageGenerationBody, extractAIHubChatImageUrls } from "@/services/api/aihub/image";
+import { requestVideoGeneration } from "@/services/api/video";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
 import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -492,7 +495,7 @@ async function writeLocalAICallLog(config: AiConfig, endpoint: string, startedAt
             responseBody,
             error,
         }),
-    }).catch(() => { });
+    }).catch(() => {});
 }
 
 function stringifyLogPayload(value: unknown) {
@@ -515,7 +518,7 @@ function redactLogImages(value: unknown) {
     const record = value as Record<string, unknown>;
     for (const key of Object.keys(record)) {
         const item = record[key];
-        if (typeof item === "string" && (item.startsWith("data:image/") || item.length > 2048 && looksLikeBase64(item))) {
+        if (typeof item === "string" && (item.startsWith("data:image/") || (item.length > 2048 && looksLikeBase64(item)))) {
             record[key] = `[redacted image/string len=${item.length}]`;
             continue;
         }
@@ -588,6 +591,27 @@ async function requestImageGenerationSingle(config: AiConfig & { seedIndex?: num
                 const payload = (await response.json()) as ImageApiResponse;
                 const images = parseImagePayload(payload, mime);
                 return { images, responseBody: stringifyLogPayload(payload) };
+            },
+        );
+    }
+
+    if (isAIHubConfig(config)) {
+        const body = createAIHubImageGenerationBody({
+            model: config.model,
+            prompt: withPromptGuard(config, withSystemPrompt(config, prompt)),
+            n: params.n,
+            size: params.size,
+            quality: params.quality,
+        });
+        return requestAndParseImages(
+            config,
+            "/images/generations",
+            body,
+            params.timeoutSeconds,
+            () => requestWithTransientRetry(() => withTimeout(params.timeoutSeconds, (signal) => fetch(aiApiUrl(config, "/images/generations"), { method: "POST", headers: aiHeaders(config, "application/json"), body: JSON.stringify(body), signal }))),
+            async (response) => {
+                const payload = (await response.json()) as ImageApiResponse;
+                return { images: parseImagePayload(payload, mime), responseBody: stringifyLogPayload(payload) };
             },
         );
     }
@@ -677,30 +701,47 @@ async function requestImageEditSingle(config: AiConfig, prompt: string, referenc
 
 async function requestAIHubImageEditSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams): Promise<GeneratedImage[]> {
     const imageUrls = await Promise.all(references.map(imageToDataUrl));
-    const body: Record<string, unknown> = {
-        model: config.model,
-        prompt: withPromptGuard(config, withSystemPrompt(config, prompt)),
-    };
-    if (params.n > 1) body.n = params.n;
-    if (params.size) body.size = params.size;
-    if (params.quality) body.quality = params.quality;
-    if (config.model === "gpt-image-2") body.referenceImageUrls = imageUrls;
-    else body.image_url = imageUrls[0];
+    const guardedPrompt = withPromptGuard(config, withSystemPrompt(config, prompt));
+    const options = { model: config.model, prompt: guardedPrompt, n: params.n, size: params.size, quality: params.quality, references: imageUrls };
+    const gptImageEdit = config.model === "gpt-image-2";
+    const body = gptImageEdit ? createAIHubImageEditForm(options, await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })))) : createAIHubImageGenerationBody(options);
+    const endpoint = gptImageEdit ? "/images/edits" : "/images/generations";
+    const requestBody: BodyInit = body instanceof FormData ? body : JSON.stringify(body);
 
     return requestAndParseImages(
         config,
-        "/images/generations",
+        endpoint,
         body,
         params.timeoutSeconds,
-        () => withTimeout(params.timeoutSeconds, (signal) => fetch(aiApiUrl(config, "/images/generations"), {
-            method: "POST",
-            headers: aiHeaders(config, "application/json"),
-            body: JSON.stringify(body),
-            signal,
-        })),
+        () =>
+            withTimeout(params.timeoutSeconds, (signal) =>
+                fetch(aiApiUrl(config, endpoint), {
+                    method: "POST",
+                    headers: aiHeaders(config, gptImageEdit ? undefined : "application/json"),
+                    body: requestBody,
+                    signal,
+                }),
+            ),
         async (response) => {
             const payload = (await response.json()) as ImageApiResponse;
             return { images: parseImagePayload(payload, IMAGE_MIME), responseBody: stringifyLogPayload(payload) };
+        },
+    );
+}
+
+async function requestAIHubChatImageSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams): Promise<GeneratedImage[]> {
+    const body = createAIHubChatImageBody(config.model, withPromptGuard(config, withSystemPrompt(config, prompt)), await Promise.all(references.map(imageToDataUrl)));
+    return requestAndParseImages(
+        config,
+        "/chat/completions",
+        body,
+        params.timeoutSeconds,
+        () => withTimeout(params.timeoutSeconds, (signal) => fetch(aiApiUrl(config, "/chat/completions"), { method: "POST", headers: aiHeaders(config, "application/json"), body: JSON.stringify(body), signal })),
+        async (response) => {
+            const payload = await response.json();
+            const images = extractAIHubChatImageUrls(payload).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+            if (!images.length) throw new ImageRequestError("接口没有返回图片", payload);
+            return { images, responseBody: stringifyLogPayload(payload) };
         },
     );
 }
@@ -804,6 +845,11 @@ async function requestImages(config: AiConfig & { seedIndex?: number; seedCount?
         const firstError = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
         throw firstError?.reason || new Error("所有并发请求均失败");
     }
+    if (isAIHubConfig(config) && isAIHubAsyncImageModel(config.model)) {
+        const result = await requestVideoGeneration(config, withPromptGuard(config, withSystemPrompt(config, prompt)), { references });
+        return [{ id: nanoid(), dataUrl: result.url }];
+    }
+    if (isAIHubConfig(config) && isAIHubChatImageModel(config.model)) return requestAIHubChatImageSingle(config, prompt, references, params);
     if (references.length && isAgnesImageModel(config.model)) {
         return requestAgnesImageEdit(config, prompt, references, params);
     }
@@ -835,7 +881,7 @@ export async function requestEdit(config: AiConfig & { seedIndex?: number; seedC
 }
 
 export async function createCanvasImageTask(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, references: ReferenceImage[], options: CanvasImageTaskOptions = {}): Promise<CanvasImageTask> {
-    if (!usesAccountProxy(config)) {
+    if (!usesAccountProxy(config) || (isAIHubConfig(config) && (isAIHubAsyncImageModel(config.model) || isAIHubChatImageModel(config.model)))) {
         const [image] = await requestImages({ ...config, count: "1" }, prompt, references);
         if (!image) throw new Error("接口没有返回图片");
         return {
@@ -884,6 +930,24 @@ async function createCanvasImageTaskRequest(config: AiConfig & { seedIndex?: num
     const tokenHeaders = { ...aiHeaders(config), ...taskChannelHeader };
     const jsonHeaders = { ...aiHeaders(config, "application/json"), ...taskChannelHeader };
     const meta = { nodeId: options.nodeId || "", source: options.source || "canvas", sourceId: options.sourceId || "", clientTaskId: options.clientTaskId || "", prompt, channelId: taskChannelId };
+    if (references.length && isAIHubConfig(config)) {
+        const promptText = withPromptGuard(config, withSystemPrompt(config, prompt));
+        const imageUrls = await Promise.all(references.map(imageToDataUrl));
+        const options = { model: config.model, prompt: promptText, n: params.n, size: params.size, quality: params.quality, references: imageUrls };
+        if (config.model === "gpt-image-2") {
+            const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+            const formData = createAIHubImageEditForm(options, files);
+            formData.set("_canvas_endpoint", "/images/edits");
+            formData.set("_canvas_source", meta.source);
+            formData.set("_canvas_node_id", meta.nodeId);
+            formData.set("_canvas_source_id", meta.sourceId);
+            formData.set("_canvas_task_id", meta.clientTaskId);
+            formData.set("_canvas_prompt", meta.prompt);
+            if (meta.channelId) formData.set("_canvas_channel_id", meta.channelId);
+            return { method: "POST", headers: tokenHeaders, body: formData };
+        }
+        return { method: "POST", headers: jsonHeaders, body: JSON.stringify({ endpoint: "/images/generations", ...meta, request: createAIHubImageGenerationBody(options) }) };
+    }
     if (references.length && isAgnesImageModel(config.model)) {
         const imageUrls = await Promise.all(
             references.map(async (ref) => {
@@ -956,6 +1020,10 @@ async function createCanvasImageTaskRequest(config: AiConfig & { seedIndex?: num
             headers: jsonHeaders,
             body: JSON.stringify({ endpoint: "/images/generations", ...meta, request: body }),
         };
+    }
+    if (isAIHubConfig(config)) {
+        const body = createAIHubImageGenerationBody({ model: config.model, prompt: withPromptGuard(config, withSystemPrompt(config, prompt)), n: 1, size: params.size, quality: params.quality });
+        return { method: "POST", headers: jsonHeaders, body: JSON.stringify({ endpoint: "/images/generations", ...meta, request: body }) };
     }
     const body: Record<string, unknown> = {
         model: config.model,
@@ -1076,21 +1144,20 @@ function normalizeAgnesImage21Ratio(value: string) {
     return "1:1";
 }
 
-function applyAgnesImageSize(
-    body: Record<string, unknown>,
-    config: AiConfig,
-    params: ImageRequestParams,
-) {
+function applyAgnesImageSize(body: Record<string, unknown>, config: AiConfig, params: ImageRequestParams) {
     if (!isAgnesImage21Model(config.model)) {
         if (params.size) body.size = params.size;
         return;
     }
-    body.size = ({
-        auto: "1K",
-        low: "2K",
-        medium: "3K",
-        high: "4K",
-    } as Record<string, string>)[params.quality] || "1K";
+    body.size =
+        (
+            {
+                auto: "1K",
+                low: "2K",
+                medium: "3K",
+                high: "4K",
+            } as Record<string, string>
+        )[params.quality] || "1K";
     body.ratio = normalizeAgnesImage21Ratio(config.size);
 }
 
@@ -1118,7 +1185,7 @@ async function requestAgnesImageEdit(config: AiConfig & { seedIndex?: number; se
                 if (publicUrl) return publicUrl;
             }
             return imageToDataUrl(ref);
-        })
+        }),
     );
 
     const body: Record<string, unknown> = {
@@ -1203,6 +1270,3 @@ export async function deleteCanvasImageTask(config: AiConfig, task?: CanvasImage
     const payload = (await response.json()) as { code?: number; msg?: string };
     if (payload.code !== 0) throw new ImageRequestError(payload.msg || "删除图片任务失败", payload);
 }
-
-
-

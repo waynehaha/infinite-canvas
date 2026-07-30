@@ -16,6 +16,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"time"
 
@@ -314,8 +315,25 @@ func runCanvasAudioTask(task model.CanvasAudioTask, user model.AuthUser, body []
 		mimeType = strings.TrimSpace(http.DetectContentType(payload))
 	}
 	if strings.Contains(mimeType, "json") {
-		saveFailedCanvasAudioTask(task, "音频接口没有返回音频文件", string(payload))
-		return
+		audioURL, audioData, audioMime, err := audioFromAIResponse(payload)
+		if err != nil {
+			saveFailedCanvasAudioTask(task, err.Error(), string(payload))
+			return
+		}
+		if len(audioData) == 0 {
+			task.Status = "completed"
+			task.Progress = 100
+			task.CompletedAt = taskTime()
+			task.ResponseBody = string(payload)
+			task.AudioURL = audioURL
+			task.MimeType = audioMime
+			task.Error = ""
+			task.ErrorDetail = ""
+			_, _ = service.SaveCanvasAudioTask(task)
+			return
+		}
+		payload = audioData
+		mimeType = audioMime
 	}
 	if task.ContentType != "" && strings.HasPrefix(task.ContentType, "audio/") {
 		mimeType = task.ContentType
@@ -336,6 +354,67 @@ func runCanvasAudioTask(task model.CanvasAudioTask, user model.AuthUser, body []
 	task.Error = ""
 	task.ErrorDetail = ""
 	_, _ = service.SaveCanvasAudioTask(task)
+}
+
+var audioURLPattern = regexp.MustCompile(`(?i)(https?://[^\s)"']+|data:audio/[a-z0-9.+-]+;base64,[a-z0-9+/=]+)`)
+
+func audioFromAIResponse(payload []byte) (string, []byte, string, error) {
+	var root any
+	if err := json.Unmarshal(payload, &root); err != nil {
+		return "", nil, "", err
+	}
+	for _, candidate := range collectAudioCandidates(root, 0) {
+		if strings.HasPrefix(candidate, "http://") || strings.HasPrefix(candidate, "https://") {
+			return candidate, nil, audioMimeFromURL(candidate), nil
+		}
+		parts := strings.SplitN(candidate, ",", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		data, err := base64.StdEncoding.DecodeString(parts[1])
+		if err == nil && len(data) > 0 {
+			return candidate, data, strings.Split(strings.TrimPrefix(parts[0], "data:"), ";")[0], nil
+		}
+	}
+	return "", nil, "", errors.New("音频接口没有返回音频地址")
+}
+
+func collectAudioCandidates(value any, depth int) []string {
+	if depth > 7 || value == nil {
+		return nil
+	}
+	switch typed := value.(type) {
+	case string:
+		return audioURLPattern.FindAllString(strings.TrimSpace(typed), -1)
+	case []any:
+		var result []string
+		for _, item := range typed {
+			result = append(result, collectAudioCandidates(item, depth+1)...)
+		}
+		return result
+	case map[string]any:
+		keys := []string{"audio_url", "url", "choices", "message", "content", "data", "result", "output"}
+		var result []string
+		for _, key := range keys {
+			result = append(result, collectAudioCandidates(typed[key], depth+1)...)
+		}
+		return result
+	}
+	return nil
+}
+
+func audioMimeFromURL(value string) string {
+	lower := strings.ToLower(strings.Split(value, "?")[0])
+	switch {
+	case strings.HasSuffix(lower, ".wav"):
+		return "audio/wav"
+	case strings.HasSuffix(lower, ".ogg"), strings.HasSuffix(lower, ".opus"):
+		return "audio/ogg"
+	case strings.HasSuffix(lower, ".m4a"), strings.HasSuffix(lower, ".aac"):
+		return "audio/mp4"
+	default:
+		return "audio/mpeg"
+	}
 }
 
 func executeCanvasAIRequest(user model.AuthUser, endpoint string, body []byte, contentType string, channelID string, userChannelID string) ([]byte, int, string, error) {
@@ -629,8 +708,6 @@ func taskTime() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
 }
 
-
-
 func readCanvasTaskSources(r *http.Request) []string {
 	values := r.URL.Query()["source"]
 	result := make([]string, 0, len(values))
@@ -643,5 +720,3 @@ func readCanvasTaskSources(r *http.Request) []string {
 	}
 	return result
 }
-
-
