@@ -16,6 +16,26 @@ export type LocalModelChannel = {
     models: string[];
 };
 
+export const AIHUB_BASE_URL = "https://aihubcc.cc/v1";
+export const AIHUB_DEFAULT_MODELS = [
+    "gemini-3.5-flash",
+    "gemini-3.1-pro",
+    "gemini-3.1-flash-lite",
+    "gpt-image-2",
+    "gpt-image-2-1k",
+    "grok-imagine-image",
+    "omni-fast",
+    "grok-imagine-video",
+    "grok-imagine-video-1.5-preview",
+];
+const AIHUB_DEFAULT_CHANNEL: LocalModelChannel = {
+    id: "aihub",
+    name: "AIHub",
+    baseUrl: AIHUB_BASE_URL,
+    apiKey: "",
+    models: AIHUB_DEFAULT_MODELS,
+};
+
 export type VideoMultiPromptItem = { prompt: string; duration: string };
 export type VideoElementReference = { id: string; kind: "image" | "video" | "audio"; name: string; type: string; dataUrl?: string; url?: string; storageKey?: string; bytes?: number; width?: number; height?: number; durationMs?: number };
 export type VideoElementItem = { name: string; description: string; references: VideoElementReference[] };
@@ -84,12 +104,12 @@ export type ModelCapability = "image" | "video" | "text" | "audio";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
-    baseUrl: "https://api.openai.com",
+    baseUrl: AIHUB_BASE_URL,
     apiKey: "",
-    model: "gpt-image-2",
+    model: "gemini-3.5-flash",
     imageModel: "gpt-image-2",
-    videoModel: "grok-imagine-video",
-    textModel: "gpt-5.5",
+    videoModel: "omni-fast",
+    textModel: "gemini-3.5-flash",
     audioModel: "gpt-4o-mini-tts",
     audioVoice: "alloy",
     audioFormat: "mp3",
@@ -107,10 +127,10 @@ export const defaultConfig: AiConfig = {
     videoWatermark: "false",
     videoCharacterOrientation: "video",
     systemPrompt: "",
-    models: [],
-    imageModels: [],
-    videoModels: [],
-    textModels: [],
+    models: AIHUB_DEFAULT_MODELS,
+    imageModels: ["gpt-image-2", "gpt-image-2-1k", "grok-imagine-image"],
+    videoModels: ["omni-fast", "grok-imagine-video", "grok-imagine-video-1.5-preview"],
+    textModels: ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite"],
     audioModels: [],
     quality: "auto",
     size: "1:1",
@@ -130,14 +150,14 @@ export const defaultConfig: AiConfig = {
         workflow: "",
         workflowAgent: "",
     },
-    localChannels: [],
+    localChannels: [AIHUB_DEFAULT_CHANNEL],
     publicChannels: [],
     syncModelConfig: false,
     syncStorageConfig: false,
     activeChannelId: "",
-    imageChannelId: "",
-    videoChannelId: "",
-    textChannelId: "",
+    imageChannelId: "aihub",
+    videoChannelId: "aihub",
+    textChannelId: "aihub",
     audioChannelId: "",
 };
 
@@ -220,6 +240,7 @@ function isVideoModelName(model: string) {
         value.includes("vidu") ||
         value.includes("pixverse") ||
         value.includes("omni-flash") ||
+        value.includes("omni-fast") ||
         value.includes("gemini-omni-video") ||
         value.includes("veo3.1") ||
         value.includes("veo-3.1") ||
@@ -438,6 +459,8 @@ function normalizeArkPlanBaseUrl(baseUrl: string) {
 
 export function normalizeLocalChannels(config: Partial<AiConfig>) {
     const channels = Array.isArray(config.localChannels) ? config.localChannels : [];
+    const legacyEmptyConfig = !channels.length && !config.apiKey && !(config.models || []).length && (!config.baseUrl || config.baseUrl === "https://api.openai.com");
+    if (legacyEmptyConfig) return [{ ...AIHUB_DEFAULT_CHANNEL, models: [...AIHUB_DEFAULT_CHANNEL.models] }];
     const normalized = channels.map((channel, index) => ({
         id: channel.id || `local-${index + 1}`,
         name: typeof channel.name === "string" ? channel.name : `本地渠道 ${index + 1}`,
@@ -469,3 +492,10 @@ export function localChannelForActiveModel(config: AiConfig) {
     return channels.find((channel) => channel.id === preferredId && channel.models.includes(config.model)) || channels.find((channel) => channel.models.includes(config.model)) || channels.find((channel) => channel.id === preferredId) || channels[0];
 }
 
+export function isAIHubConfig(config: AiConfig) {
+    const scopedConfig = { ...config, model: config.model || config.imageModel || config.videoModel || config.textModel };
+    const channelId = channelIdForActiveModel(scopedConfig);
+    const channels = config.channelMode === "remote" ? config.publicChannels : normalizeLocalChannels(config);
+    const channel = channels.find((item) => (item.id || "") === channelId) || channels.find((item) => (item.models || []).includes(scopedConfig.model)) || channels[0];
+    return [channel?.id, channel?.name, channel?.baseUrl].filter(Boolean).join(" ").toLowerCase().includes("aihub");
+}

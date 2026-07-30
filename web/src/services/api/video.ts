@@ -6,7 +6,7 @@ import { isKIEGrokVideoModel } from "@/components/video-settings-panel";
 import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
-import { buildApiUrl, channelIdForActiveModel, localChannelForActiveModel, type AiConfig, type VideoElementReference } from "@/stores/use-config-store";
+import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig, type VideoElementReference } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -165,6 +165,7 @@ export async function deleteVideoGenerationTask(config: AiConfig, task?: VideoRe
 
 async function createVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>) {
     const size = normalizeVideoSize(config.size);
+    if (isAIHubConfig({ ...config, model, videoModel: model })) return createAIHubVideoRequestBody(config, model, prompt, input, size);
     if (isAgnesVideoModel(model)) {
         const references = input.references;
         const inputReferences = await Promise.all(references.slice(0, 7).map(imageToAgnesReference));
@@ -236,6 +237,50 @@ async function createVideoRequestBody(config: AiConfig, model: string, prompt: s
     const audioFiles = kling ? [] : await Promise.all(input.audioReferences.map(mediaReferenceToFormValue));
     audioFiles.forEach((file) => body.append("audio_reference[]", file));
     return body;
+}
+
+async function createAIHubVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>, size: string | null) {
+    const body = new FormData();
+    body.set("model", model);
+    body.set("prompt", prompt);
+    const reference = input.firstFrame || input.references[0] || null;
+
+    if (model === "gpt-image-2-2k" || model === "gpt-image-2-3.5k") {
+        body.set("aspect_ratio", videoAspectRatio(size));
+        if (reference) body.set("image_url", await imageReferenceToAIHubString(reference));
+        return body;
+    }
+
+    if (model.startsWith("grok-imagine-video")) {
+        body.set("seconds", closestAllowedSeconds(Number(normalizeVideoSeconds(config.videoSeconds)), [6, 10, 12, 16, 20]));
+        if (size) body.set("size", size);
+        if (reference) body.set("image_reference", await imageReferenceToAIHubString(reference));
+        return body;
+    }
+
+    body.set("seconds", normalizeVideoSeconds(config.videoSeconds));
+    body.set("aspect_ratio", videoAspectRatio(size));
+    body.set("resolution", normalizeVideoResolution(config.vquality));
+    if (reference) body.set("first_image", await imageReferenceToFormValue(reference));
+    if (input.references.length > 1) body.set("images", JSON.stringify(await Promise.all(input.references.map(imageReferenceToAIHubString))));
+    return body;
+}
+
+async function imageReferenceToAIHubString(image: ReferenceImage) {
+    const value = await imageReferenceToFormValue(image);
+    return typeof value === "string" ? value : imageToDataUrl(image);
+}
+
+function videoAspectRatio(size: string | null) {
+    if (!size) return "16:9";
+    const dimensions = parseVideoDimensions(size);
+    if (!dimensions) return "16:9";
+    const ratio = dimensions.width / dimensions.height;
+    if (ratio > 1.5) return "16:9";
+    if (ratio < 0.75) return "9:16";
+    if (ratio > 1.15) return "4:3";
+    if (ratio < 0.87) return "3:4";
+    return "1:1";
 }
 
 function isAPIMartKlingV26VideoConfig(config: AiConfig, model: string) {

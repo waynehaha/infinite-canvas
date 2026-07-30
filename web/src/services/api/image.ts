@@ -2,7 +2,7 @@ import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
-import { buildApiUrl, channelIdForActiveModel, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
 import { nanoid } from "nanoid";
@@ -675,6 +675,36 @@ async function requestImageEditSingle(config: AiConfig, prompt: string, referenc
     );
 }
 
+async function requestAIHubImageEditSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams): Promise<GeneratedImage[]> {
+    const imageUrls = await Promise.all(references.map(imageToDataUrl));
+    const body: Record<string, unknown> = {
+        model: config.model,
+        prompt: withPromptGuard(config, withSystemPrompt(config, prompt)),
+    };
+    if (params.n > 1) body.n = params.n;
+    if (params.size) body.size = params.size;
+    if (params.quality) body.quality = params.quality;
+    if (config.model === "gpt-image-2") body.referenceImageUrls = imageUrls;
+    else body.image_url = imageUrls[0];
+
+    return requestAndParseImages(
+        config,
+        "/images/generations",
+        body,
+        params.timeoutSeconds,
+        () => withTimeout(params.timeoutSeconds, (signal) => fetch(aiApiUrl(config, "/images/generations"), {
+            method: "POST",
+            headers: aiHeaders(config, "application/json"),
+            body: JSON.stringify(body),
+            signal,
+        })),
+        async (response) => {
+            const payload = (await response.json()) as ImageApiResponse;
+            return { images: parseImagePayload(payload, IMAGE_MIME), responseBody: stringifyLogPayload(payload) };
+        },
+    );
+}
+
 function createResponsesImageTool(config: AiConfig, params: ImageRequestParams, isEdit: boolean) {
     const tool: Record<string, unknown> = {
         type: "image_generation",
@@ -777,6 +807,7 @@ async function requestImages(config: AiConfig & { seedIndex?: number; seedCount?
     if (references.length && isAgnesImageModel(config.model)) {
         return requestAgnesImageEdit(config, prompt, references, params);
     }
+    if (references.length && isAIHubConfig(config)) return requestAIHubImageEditSingle(config, prompt, references, params);
     if (config.apiMode === "responses") return requestResponsesSingle(config, prompt, inputImageDataUrls, params);
     return references.length ? requestImageEditSingle(config, prompt, references, params) : requestImageGenerationSingle(config, prompt, params);
 }
@@ -1172,7 +1203,6 @@ export async function deleteCanvasImageTask(config: AiConfig, task?: CanvasImage
     const payload = (await response.json()) as { code?: number; msg?: string };
     if (payload.code !== 0) throw new ImageRequestError(payload.msg || "删除图片任务失败", payload);
 }
-
 
 
 
