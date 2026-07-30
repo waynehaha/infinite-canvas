@@ -74,6 +74,7 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
     if (isAIHubOmniModel(input.model)) {
         if (input.references.length > 5) throw new Error("Omni 最多支持 5 张参考图");
         if (input.videoReferences.length > 2) throw new Error("Omni V2V 最多支持 2 个参考视频");
+        [...input.references, input.firstFrame, input.lastFrame].forEach(assertAIHubOmniImageSize);
         body.set("seconds", input.seconds);
         body.set("aspect_ratio", input.aspectRatio);
         if (model.includes("v2v")) {
@@ -97,6 +98,21 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
     return body;
 }
 
+export function aiHubVideoFailureMessage(model: string, message: string) {
+    if (isAIHubOmniModel(model) && /bad_reference_image|failed to fetch reference image|reference upload failed/i.test(message) && /403|forbidden/i.test(message)) {
+        return "参考图片的源站拒绝了 AIHub 读取（403），请将图片下载后重新上传再试";
+    }
+    return message;
+}
+
+function assertAIHubOmniImageSize(value?: string) {
+    const match = value?.match(/^data:image\/[\w.+-]+;base64,([\s\S]+)$/i);
+    if (!match) return;
+    const base64 = match[1].replace(/\s/g, "");
+    const bytes = Math.floor((base64.length * 3) / 4) - (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0);
+    if (bytes > 8 * 1024 * 1024) throw new Error("Omni 单张参考图片不能超过 8MB");
+}
+
 function appendMedia(body: FormData, field: string, values: AIHubMediaValue[]) {
     const strings = values.filter((value): value is string => typeof value === "string");
     if (strings.length) body.set(field, JSON.stringify(strings));
@@ -110,10 +126,13 @@ function appendOmniVideos(body: FormData, values: AIHubMediaValue[]) {
     values.filter((value): value is File => value instanceof File).forEach((file, index) => body.set(index === 0 ? "input_video" : "input_video2", file));
 }
 
-export function resolveAIHubTaskResultUrl(value: string, resolveApiPath: (path: string) => string) {
+export function resolveAIHubTaskResultUrl(value: string, resolveApiPath: (path: string) => string, taskId = "") {
     if (/^https?:\/\//i.test(value)) return value;
     const normalized = value.trim();
     if (!normalized) return "";
+    if (taskId && /^\/?v1\/videos\/[^/]+\/content(?:\?|$)/i.test(normalized)) {
+        return resolveApiPath(`/videos/${encodeURIComponent(taskId)}/content`);
+    }
     const apiPath = normalized.replace(/^\/v1(?=\/)/, "");
     return resolveApiPath(apiPath.startsWith("/") ? apiPath : `/${apiPath}`);
 }

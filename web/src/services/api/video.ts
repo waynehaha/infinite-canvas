@@ -1,12 +1,12 @@
 import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
-import { createAIHubVideoBody, resolveAIHubTaskResultUrl } from "@/services/api/aihub/video";
+import { aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } from "@/services/api/aihub/video";
 import { isAIHubSeedanceModel } from "@/lib/aihub-models";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { isKIEGrokVideoModel } from "@/components/video-settings-panel";
 import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
-import { resolveMediaUrl } from "@/services/file-storage";
+import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
 import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig, type VideoElementReference } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -38,10 +38,15 @@ export type VideoResponse = {
     started_at?: string | number;
     startedAt?: string | number;
     request_body?: string;
+    storageKey?: string;
+    storage_key?: string;
+    bytes?: number;
+    mimeType?: string;
+    mime_type?: string;
 };
 type ApiVideoEnvelope = { code: number; data?: VideoResponse | VideoResponse[] | null; msg?: string; message?: string };
 type ApiVideoResponse = VideoResponse | ApiVideoEnvelope;
-export type VideoGenerationResult = { id: string; url: string; durationMs: number; width: number; height: number; bytes: number; mimeType: string; task: VideoResponse };
+export type VideoGenerationResult = { id: string; url: string; storageKey: string; durationMs: number; width: number; height: number; bytes: number; mimeType: string; task: VideoResponse };
 export type CreatedVideoGenerationTask = { task: VideoResponse; pollId: string; startedAt: number; requestBody: unknown };
 export type VideoProgressHandler = (progress: number, task: VideoResponse) => void;
 export type VideoTaskCreateOptions = { clientTaskId?: string; source?: "video-workbench" | "canvas"; sourceId?: string };
@@ -156,7 +161,7 @@ export async function pollCreatedVideoGenerationTask(
         for (;;) {
             const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data);
             onPoll?.(video);
-            if (isFailedVideoStatus(video.status)) throw new VideoRequestError(video.error?.message || "视频生成失败", video);
+            if (isFailedVideoStatus(video.status)) throw new VideoRequestError(aiHubVideoFailureMessage(model, video.error?.message || "视频生成失败"), video);
             if (typeof video.progress === "number") onProgress?.(video.progress, video);
             if (isCompletedVideoStatus(video.status) || video.video_url || video.url) {
                 completed = video;
@@ -164,8 +169,8 @@ export async function pollCreatedVideoGenerationTask(
             }
             await new Promise((resolve) => setTimeout(resolve, VIDEO_POLL_INTERVAL_MS));
         }
-        const rawVideoUrl = completed?.video_url || completed?.url || "";
-        const videoUrl = isAIHubConfig(config) ? resolveAIHubTaskResultUrl(rawVideoUrl, (path) => aiApiUrl(config, path)) : rawVideoUrl;
+        completed = await materializeAIHubVideoTask(config, completed!, pollId);
+        const videoUrl = completed.video_url || completed.url || "";
         if (!videoUrl) throw new VideoRequestError("视频生成完成但没有返回视频地址", completed);
         const result = buildVideoGenerationResult(completed, videoUrl, Date.now() - startedAt);
         void writeVideoAICallLog(config, model, "/videos", "POST", startedAt, 200, stringifyLogPayload(requestBody ? summarizeVideoRequestBody(requestBody) : { taskId: pollId }), stringifyLogPayload({ task: completed, video: result }), "");
@@ -192,7 +197,21 @@ export async function pollVideoGenerationTaskStatus(config: AiConfig, task: Vide
     const model = config.model || config.videoModel;
     const pollId = videoPollId(model, task);
     if (!pollId) throw new VideoRequestError("视频接口没有返回任务 ID", task);
-    return unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data);
+    const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data);
+    return isCompletedVideoStatus(video.status) || video.video_url || video.url ? materializeAIHubVideoTask(config, video, pollId) : video;
+}
+
+async function materializeAIHubVideoTask(config: AiConfig, task: VideoResponse, pollId: string) {
+    if (!isAIHubConfig(config)) return task;
+    const rawUrl = task.video_url || task.url || "";
+    if (!rawUrl || /^(?:https?:|blob:|data:)/i.test(rawUrl)) return task;
+    const downloadUrl = resolveAIHubTaskResultUrl(rawUrl, (path) => aiApiUrl(config, path), pollId);
+    const response = await fetch(downloadUrl, { headers: aiHeaders(config) });
+    if (!response.ok) throw new VideoRequestError(`视频结果下载失败：${response.status}`, { task, downloadPath: `/videos/${pollId}/content` });
+    const blob = await response.blob();
+    if (!blob.size || (!blob.type.startsWith("video/") && !blob.type.startsWith("image/"))) throw new VideoRequestError("视频结果接口没有返回媒体文件", { task, contentType: blob.type, bytes: blob.size });
+    const stored = await uploadMediaFile(blob, blob.type.startsWith("image/") ? "image" : "video");
+    return { ...task, video_url: stored.url, url: stored.url, storageKey: stored.storageKey, storage_key: stored.storageKey, bytes: stored.bytes, mimeType: stored.mimeType, mime_type: stored.mimeType };
 }
 
 export async function listVideoGenerationTasks(config: AiConfig) {
@@ -711,7 +730,7 @@ function normalizeVideoResponse(value: unknown): VideoResponse {
 
 function buildVideoGenerationResult(task: VideoResponse, url: string, durationMs: number): VideoGenerationResult {
     const size = parseVideoSize((task as Record<string, unknown>).size);
-    return { id: task.id, url, durationMs, width: size.width, height: size.height, bytes: 0, mimeType: "video/mp4", task };
+    return { id: task.id, url, storageKey: task.storageKey || task.storage_key || "", durationMs, width: size.width, height: size.height, bytes: task.bytes || 0, mimeType: task.mimeType || task.mime_type || "video/mp4", task };
 }
 
 function parseVideoSize(value: unknown) {

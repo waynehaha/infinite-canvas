@@ -13,14 +13,14 @@ registerHooks({
 });
 
 const { createAIHubImageGenerationBody } = await import("../src/services/api/aihub/image.ts");
-const { createAIHubVideoBody, resolveAIHubTaskResultUrl } = await import("../src/services/api/aihub/video.ts");
+const { aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } = await import("../src/services/api/aihub/video.ts");
 
 test("AIHub 默认模型完整且不重复", () => {
-    assert.equal(AIHUB_DEFAULT_MODELS.length, 35);
-    assert.equal(new Set(AIHUB_DEFAULT_MODELS).size, 35);
+    assert.equal(AIHUB_DEFAULT_MODELS.length, 31);
+    assert.equal(new Set(AIHUB_DEFAULT_MODELS).size, 31);
     assert.deepEqual(
         Object.fromEntries(Object.entries(AIHUB_MODELS_BY_CAPABILITY).map(([key, models]) => [key, models.length])),
-        { text: 13, image: 8, video: 13, audio: 1 },
+        { text: 9, image: 8, video: 13, audio: 1 },
     );
     assert.equal(aihubModelCapability("gemini-3.1-flash-lite"), "text");
     assert.equal(aihubModelCapability("gemini-3.1-flash-image-4k"), "image");
@@ -60,6 +60,36 @@ test("Omni 单图字段和相对任务地址正确", () => {
     assert.equal(body.get("image_url"), "data:image/png;base64,AA==");
     assert.equal(body.get("first_image"), null);
     assert.equal(resolveAIHubTaskResultUrl("/v1/videos/task/content", (path) => `/api/v1${path}`), "/api/v1/videos/task/content");
+    assert.equal(resolveAIHubTaskResultUrl("/v1/videos/vid-internal/content", (path) => `/api/v1${path}`, "task-public"), "/api/v1/videos/task-public/content");
+    const publicImage = createAIHubVideoBody({
+        model: "omni-fast",
+        prompt: "生成视频",
+        seconds: "10",
+        aspectRatio: "16:9",
+        resolution: "720p",
+        references: ["https://cdn.example.com/reference.png"],
+        videoReferences: [],
+        audioReferences: [],
+    });
+    assert.equal(publicImage.get("image_url"), "https://cdn.example.com/reference.png");
+    assert.equal(aiHubVideoFailureMessage("omni-fast", "bad_reference_image: failed to fetch reference image: HTTP 403"), "参考图片的源站拒绝了 AIHub 读取（403），请将图片下载后重新上传再试");
+});
+
+test("Omni 会拦截超过 8MB 的本地参考图", () => {
+    assert.throws(
+        () =>
+            createAIHubVideoBody({
+                model: "omni-fast",
+                prompt: "生成视频",
+                seconds: "10",
+                aspectRatio: "16:9",
+                resolution: "720p",
+                references: [`data:image/png;base64,${"A".repeat(11_184_812)}`],
+                videoReferences: [],
+                audioReferences: [],
+            }),
+        /不能超过 8MB/,
+    );
 });
 
 test("Seedance 素材边界会提前拦截", () => {

@@ -2465,12 +2465,12 @@ function videoFromTaskResponse(task: VideoResponse, durationMs: number): Generat
     return {
         id: task.id || task.video_id || task.task_id || nanoid(),
         url: task.video_url || task.url || "",
-        storageKey: "",
+        storageKey: task.storageKey || task.storage_key || "",
         durationMs,
         width: size.width,
         height: size.height,
-        bytes: 0,
-        mimeType: "video/mp4",
+        bytes: task.bytes || 0,
+        mimeType: task.mimeType || task.mime_type || "video/mp4",
     };
 }
 

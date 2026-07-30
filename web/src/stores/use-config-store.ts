@@ -26,6 +26,7 @@ const AIHUB_DEFAULT_CHANNEL: LocalModelChannel = {
     models: AIHUB_DEFAULT_MODELS,
 };
 const AIHUB_LEGACY_DEFAULT_MODELS = ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite", "gpt-image-2", "gpt-image-2-1k", "grok-imagine-image", "omni-fast", "grok-imagine-video", "grok-imagine-video-1.5-preview"];
+const AIHUB_PREVIOUS_DEFAULT_MODELS = [...AIHUB_DEFAULT_MODELS, "gpt-5-5", "gpt-5-3", "gpt-5-3-mini", "gpt-5-2"];
 
 export type VideoMultiPromptItem = { prompt: string; duration: string };
 export type VideoElementReference = { id: string; kind: "image" | "video" | "audio"; name: string; type: string; dataUrl?: string; url?: string; storageKey?: string; bytes?: number; width?: number; height?: number; durationMs?: number };
@@ -475,7 +476,7 @@ export function normalizeLocalChannels(config: Partial<AiConfig>) {
     if (legacyEmptyConfig) return [{ ...AIHUB_DEFAULT_CHANNEL, models: [...AIHUB_DEFAULT_CHANNEL.models] }];
     const normalized = channels.map((channel, index) => {
         const models = Array.isArray(channel.models) ? channel.models.filter(Boolean) : [];
-        const managedAIHub = channel.id === "aihub" && sameModelSet(models, AIHUB_LEGACY_DEFAULT_MODELS);
+        const managedAIHub = channel.id === "aihub" && [AIHUB_LEGACY_DEFAULT_MODELS, AIHUB_PREVIOUS_DEFAULT_MODELS].some((defaults) => sameModelSet(models, defaults));
         return {
             id: channel.id || `local-${index + 1}`,
             name: typeof channel.name === "string" ? channel.name : `本地渠道 ${index + 1}`,

@@ -4504,12 +4504,12 @@ function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
             metadata: {
                 ...metadata,
                 content: url,
-                storageKey: "",
+                storageKey: task.storageKey || task.storage_key || "",
                 status: NODE_STATUS_SUCCESS,
                 naturalWidth: taskSize.width,
                 naturalHeight: taskSize.height,
-                bytes: 0,
-                mimeType: "video/mp4",
+                bytes: task.bytes || 0,
+                mimeType: task.mimeType || task.mime_type || "video/mp4",
                 progress: 100,
             },
         };
