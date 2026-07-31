@@ -2,7 +2,6 @@ import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } from "@/services/api/aihub/video";
-import { isAIHubSeedanceModel } from "@/lib/aihub-models";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { isKIEGrokVideoModel } from "@/components/video-settings-panel";
 import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
@@ -306,7 +305,6 @@ async function createVideoRequestBody(config: AiConfig, model: string, prompt: s
 }
 
 async function createAIHubVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>, size: string | null) {
-    const grokSeconds = closestAllowedSeconds(Number(normalizeVideoSeconds(config.videoSeconds)), [6, 10, 12, 16, 20]);
     const references = await Promise.all(input.references.map(imageReferenceToAIHubString));
     const firstFrame = input.firstFrame ? await imageReferenceToAIHubString(input.firstFrame) : undefined;
     const lastFrame = input.lastFrame ? await imageReferenceToAIHubString(input.lastFrame) : undefined;
@@ -315,8 +313,8 @@ async function createAIHubVideoRequestBody(config: AiConfig, model: string, prom
     return createAIHubVideoBody({
         model,
         prompt,
-        seconds: model.startsWith("grok-imagine-video") ? grokSeconds : isAIHubSeedanceModel(model) ? normalizeAIHubSeedanceSeconds(config.videoSeconds) : normalizeVideoSeconds(config.videoSeconds),
-        aspectRatio: videoAspectRatio(size),
+        seconds: config.videoSeconds,
+        aspectRatio: size || config.size || "",
         resolution: normalizeVideoResolution(config.vquality),
         references,
         videoReferences,
@@ -329,24 +327,6 @@ async function createAIHubVideoRequestBody(config: AiConfig, model: string, prom
 async function imageReferenceToAIHubString(image: ReferenceImage) {
     const value = await imageReferenceToFormValue(image);
     return typeof value === "string" ? value : imageToDataUrl(image);
-}
-
-function videoAspectRatio(size: string | null) {
-    if (!size) return "16:9";
-    if (["16:9", "9:16", "1:1", "21:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5"].includes(size)) return size;
-    const dimensions = parseVideoDimensions(size);
-    if (!dimensions) return "16:9";
-    const ratio = dimensions.width / dimensions.height;
-    if (ratio > 1.5) return "16:9";
-    if (ratio < 0.75) return "9:16";
-    if (ratio > 1.15) return "4:3";
-    if (ratio < 0.87) return "3:4";
-    return "1:1";
-}
-
-function normalizeAIHubSeedanceSeconds(value: string) {
-    const seconds = Math.floor(Number(value) || 6);
-    return String(Math.max(4, Math.min(15, seconds)));
 }
 
 function isAPIMartKlingV26VideoConfig(config: AiConfig, model: string) {

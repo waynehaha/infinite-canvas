@@ -7,6 +7,7 @@ import { Button, Input, Switch } from "antd";
 
 import { VideoSettingsPanel, isAPIMartKlingMotionControlConfig, isKIEKlingMotionControlConfig, isAPIMartKlingV3Config, isKIEKlingV3Config, videoResolutionLabel, videoSecondsLabel, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
 import { supportsVideoFrameReferences } from "@/lib/video-model-capabilities";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -37,6 +38,17 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, frameOption
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
+    const model = config.model || config.videoModel || "";
+    const capability = getAIHubVideoCapability(model);
+    const aspectRatioCapability = capability?.aspectRatio;
+    const durationCapability = capability?.duration;
+    const capabilityLabel = capability ? [
+        capability.resolution?.label,
+        aspectRatioCapability?.options.find((item) => item.value === normalizeAIHubSelectValue(aspectRatioCapability, config.size))?.label,
+        !visualOnly && durationCapability?.mode === "fixed" ? durationCapability.label : "",
+        !visualOnly && durationCapability?.mode === "select" ? durationCapability.options.find((item) => item.value === normalizeAIHubSelectValue(durationCapability, config.videoSeconds))?.label : "",
+        !visualOnly && durationCapability?.mode === "range" ? `${normalizeAIHubRangeValue(durationCapability, config.videoSeconds)} 秒` : "",
+    ].filter(Boolean).join(" · ") : "";
 
     useEffect(() => {
         if (!open) return;
@@ -66,8 +78,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, frameOption
             <span ref={buttonRef} className="inline-flex min-w-0">
                 <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[170px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={buttonIcon || <Settings2 className="size-3.5" />} onClick={() => setOpen((current) => !current)}>
                     <span className="truncate">
-                        {videoResolutionLabel(config.vquality)} · {videoSizeLabel(config.size)}
-                        {visualOnly ? null : <> · {videoSecondsLabel(config.videoSeconds)}</>}
+                        {capability ? capabilityLabel : <>{videoResolutionLabel(config.vquality)} · {videoSizeLabel(config.size)}{visualOnly ? null : <> · {videoSecondsLabel(config.videoSeconds)}</>}</>}
                     </span>
                 </Button>
             </span>
@@ -86,11 +97,12 @@ function VideoSettingsPortal({ buttonRect, panelRef, placement, theme, config, o
     const topPlacement = placement?.startsWith("top");
     const style = { position: "fixed", zIndex: 1200, width, left: Math.max(margin, Math.min(window.innerWidth - width - margin, left)), ...(topPlacement ? { bottom: window.innerHeight - buttonRect.top + gap, maxHeight: Math.max(260, buttonRect.top - margin * 2) } : { top: buttonRect.bottom + gap, maxHeight: Math.max(260, window.innerHeight - buttonRect.bottom - margin * 2) }), background: theme.toolbar.panel, borderRadius: 18, boxShadow: "0 18px 54px rgba(28, 25, 23, 0.16)", padding: 18, overflowY: "auto", color: theme.node.text } as const;
     const model = config.model || config.videoModel || "";
+    const capability = getAIHubVideoCapability(model);
     const isAPIMartKlingV3 = isAPIMartKlingV3Config(config, model);
     const isKIEKlingV3 = isKIEKlingV3Config(config, model);
     const isKlingMotionControl = isAPIMartKlingMotionControlConfig(config, model) || isKIEKlingMotionControlConfig(config, model);
     const isKlingV3 = isAPIMartKlingV3 || isKIEKlingV3;
-    const frameReferencesEnabled = !isKlingV3 && supportsVideoFrameReferences(model);
+    const frameReferencesEnabled = !isKlingV3 && (capability?.references?.frames === "pair" || supportsVideoFrameReferences(model));
     const optionIds = useMemo(() => new Set(frameOptions.map((item) => item.nodeId)), [frameOptions]);
     const firstFrameValue = firstFrameNodeId && optionIds.has(firstFrameNodeId) ? firstFrameNodeId : "";
     const lastFrameValue = lastFrameNodeId && optionIds.has(lastFrameNodeId) ? lastFrameNodeId : "";
@@ -109,7 +121,7 @@ function VideoSettingsPortal({ buttonRect, panelRef, placement, theme, config, o
                         </div>
                     </CanvasSettingGroup>
                 ) : null}
-                <VideoSettingsPanel config={config} modelName={visualOnly ? config.videoModel || config.model : undefined} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} showTitle={false} className="space-y-4" hideNegativePrompt={isKlingV3} visualOnly={visualOnly} />
+                <VideoSettingsPanel config={config} modelName={model} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} showTitle={false} className="space-y-4" hideNegativePrompt={isKlingV3} visualOnly={visualOnly} />
             </div>
         </div>,
         document.body,

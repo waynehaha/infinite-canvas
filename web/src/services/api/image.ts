@@ -75,6 +75,16 @@ export class ImageRequestError extends Error {
     }
 }
 
+export class ModelListRequestError extends Error {
+    status: number;
+
+    constructor(message: string, status = 0) {
+        super(message);
+        this.name = "ModelListRequestError";
+        this.status = status;
+    }
+}
+
 type ImageRequestParams = {
     n: number;
     quality: string;
@@ -1120,7 +1130,7 @@ export async function fetchImageModels(config: AiConfig) {
             .filter((id): id is string => Boolean(id))
             .sort((a, b) => a.localeCompare(b));
     } catch (error) {
-        throw new Error(readAxiosError(error, "读取模型失败"));
+        throw new ModelListRequestError(readAxiosError(error, "读取模型失败"), axios.isAxiosError(error) ? error.response?.status || 0 : 0);
     }
 }
 function isAgnesImageModel(model: string) {

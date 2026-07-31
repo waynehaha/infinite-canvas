@@ -14,6 +14,7 @@ import { KlingV26WorkbenchPanel } from "@/app/(user)/video/components/kling-v26-
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { modelKey, supportsVideoAudioGeneration, supportsVideoFrameReferences } from "@/lib/video-model-capabilities";
@@ -160,6 +161,10 @@ export default function VideoPage() {
     const effectiveConfigRef = useRef(videoConfig);
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
+    const aiHubCapability = getAIHubVideoCapability(model);
+    const aiHubImageLimit = aiHubCapability ? aiHubCapability.references?.images?.max || 0 : SEEDANCE_REFERENCE_LIMITS.images;
+    const aiHubVideoLimit = aiHubCapability ? aiHubCapability.references?.videos?.max || 0 : SEEDANCE_REFERENCE_LIMITS.videos;
+    const aiHubAudioLimit = aiHubCapability ? aiHubCapability.references?.audios?.max || 0 : SEEDANCE_REFERENCE_LIMITS.audios;
     const canGenerate = Boolean(prompt.trim());
     const pendingCount = results.filter((item) => item.status === "pending").length;
     const klingWorkbench = resolveKlingWorkbenchConfig(videoConfig, model);
@@ -168,6 +173,17 @@ export default function VideoPage() {
     const isKlingWorkbench = Boolean(klingWorkbench);
     const pendingLogCount = logs.filter((log) => log.status === "生成中" && log.task && !log.video).length;
     const usesBackendVideoTasks = (value: AiConfig) => value.channelMode === "remote" || (value.channelMode === "local" && Boolean(token));
+
+    useEffect(() => {
+        if (!aiHubCapability) return;
+        setReferences((value) => value.slice(0, aiHubImageLimit));
+        setVideoReferences((value) => value.slice(0, aiHubVideoLimit));
+        setAudioReferences((value) => value.slice(0, aiHubAudioLimit));
+        if (aiHubCapability.references?.frames !== "pair") {
+            setFirstFrame(null);
+            setLastFrame(null);
+        }
+    }, [aiHubAudioLimit, aiHubCapability, aiHubImageLimit, aiHubVideoLimit]);
 
     const restorePendingLogResults = (sourceLogs: GenerationLog[]) => {
         const pendingLogs = sourceLogs.filter((log) => log.status === "生成中" && log.task && !log.video);
@@ -329,15 +345,20 @@ export default function VideoPage() {
 
     const addReferences = async (files?: FileList | null) => {
         const selectedFiles = Array.from(files || []);
-        const referenceImageLimit = isKlingWorkbench ? 2 : SEEDANCE_REFERENCE_LIMITS.images;
-        const unsupported = isKlingWorkbench ? selectedFiles.filter((file) => !file.type.startsWith("image/")) : selectedFiles.filter((file) => !file.type.startsWith("image/") && !file.type.startsWith("video/") && !isSupportedAudioFile(file));
+        const referenceImageLimit = isKlingWorkbench ? 2 : aiHubImageLimit;
+        const referenceVideoLimit = isKlingWorkbench ? 0 : aiHubVideoLimit;
+        const referenceAudioLimit = isKlingWorkbench ? 0 : aiHubAudioLimit;
+        const imageMaxBytes = aiHubCapability?.references?.images?.maxBytes || SEEDANCE_REFERENCE_LIMITS.imageMaxBytes;
+        const videoMaxBytes = aiHubCapability?.references?.videos?.maxBytes || SEEDANCE_REFERENCE_LIMITS.videoMaxBytes;
+        const audioMaxBytes = aiHubCapability?.references?.audios?.maxBytes || SEEDANCE_REFERENCE_LIMITS.audioMaxBytes;
+        const unsupported = selectedFiles.filter((file) => (file.type.startsWith("image/") && !referenceImageLimit) || (file.type.startsWith("video/") && !referenceVideoLimit) || (isSupportedAudioFile(file) && !referenceAudioLimit) || (!file.type.startsWith("image/") && !file.type.startsWith("video/") && !isSupportedAudioFile(file)));
         if (unsupported.length) message.warning(isKlingWorkbench ? "当前 Kling 仅支持参考图" : "已忽略不支持的参考素材，请使用图片、mp4/mov 视频或 mp3/wav 音频");
-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= SEEDANCE_REFERENCE_LIMITS.imageMaxBytes).slice(0, Math.max(0, referenceImageLimit - references.length));
-        const videoFiles = isKlingWorkbench ? [] : selectedFiles.filter((file) => file.type.startsWith("video/") && file.size <= SEEDANCE_REFERENCE_LIMITS.videoMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.videos - videoReferences.length);
-        const audioFiles = isKlingWorkbench ? [] : selectedFiles.filter((file) => isSupportedAudioFile(file) && file.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length);
-        if (selectedFiles.some((file) => file.type.startsWith("image/") && file.size > SEEDANCE_REFERENCE_LIMITS.imageMaxBytes)) message.warning("已忽略超过 30MB 的参考图");
-        if (selectedFiles.some((file) => file.type.startsWith("video/") && file.size > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes)) message.warning("已忽略超过 50MB 的参考视频");
-        if (selectedFiles.some((file) => isSupportedAudioFile(file) && file.size > SEEDANCE_REFERENCE_LIMITS.audioMaxBytes)) message.warning("已忽略超过 15MB 的参考音频");
+        const imageFiles = selectedFiles.filter((file) => referenceImageLimit && file.type.startsWith("image/") && file.size <= imageMaxBytes).slice(0, Math.max(0, referenceImageLimit - references.length));
+        const videoFiles = selectedFiles.filter((file) => referenceVideoLimit && file.type.startsWith("video/") && file.size <= videoMaxBytes).slice(0, Math.max(0, referenceVideoLimit - videoReferences.length));
+        const audioFiles = selectedFiles.filter((file) => referenceAudioLimit && isSupportedAudioFile(file) && file.size <= audioMaxBytes).slice(0, Math.max(0, referenceAudioLimit - audioReferences.length));
+        if (selectedFiles.some((file) => file.type.startsWith("image/") && file.size > imageMaxBytes)) message.warning(`已忽略超过 ${Math.floor(imageMaxBytes / 1024 / 1024)}MB 的参考图`);
+        if (selectedFiles.some((file) => file.type.startsWith("video/") && file.size > videoMaxBytes)) message.warning(`已忽略超过 ${Math.floor(videoMaxBytes / 1024 / 1024)}MB 的参考视频`);
+        if (selectedFiles.some((file) => isSupportedAudioFile(file) && file.size > audioMaxBytes)) message.warning(`已忽略超过 ${Math.floor(audioMaxBytes / 1024 / 1024)}MB 的参考音频`);
         const hideLoading = imageFiles.length ? message.loading("正在上传参考图...", 0) : null;
         try {
             const nextReferences = await Promise.all(
@@ -363,8 +384,8 @@ export default function VideoPage() {
                 message.warning,
             );
             setReferences((value) => [...value, ...nextReferences].slice(0, referenceImageLimit));
-            setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
-            setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.audios));
+            setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, referenceVideoLimit));
+            setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, referenceAudioLimit));
             if (nextReferences.length) message.success(`已上传 ${nextReferences.length} 张参考图`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "参考素材上传失败");
@@ -379,8 +400,9 @@ export default function VideoPage() {
             message.error("请选择首尾帧图片");
             return;
         }
-        if (file.size > SEEDANCE_REFERENCE_LIMITS.imageMaxBytes) {
-            message.warning("已忽略超过 30MB 的首尾帧图片");
+        const maxBytes = aiHubCapability?.references?.images?.maxBytes || SEEDANCE_REFERENCE_LIMITS.imageMaxBytes;
+        if (file.size > maxBytes) {
+            message.warning(`已忽略超过 ${Math.floor(maxBytes / 1024 / 1024)}MB 的首尾帧图片`);
             return;
         }
         const hideLoading = message.loading(slot === "first" ? "正在上传首帧..." : "正在上传尾帧...", 0);
@@ -423,6 +445,11 @@ export default function VideoPage() {
     };
 
     const addReferencesFromClipboard = async () => {
+        const imageLimit = isKlingWorkbench ? 2 : aiHubImageLimit;
+        if (!imageLimit) {
+            message.warning("当前模型不支持参考图");
+            return;
+        }
         try {
             const items = await navigator.clipboard.read();
             const blobs = await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("image/")).map((type) => item.getType(type))));
@@ -431,12 +458,12 @@ export default function VideoPage() {
                 return;
             }
             const nextReferences = await Promise.all(
-                blobs.slice(0, Math.max(0, (isKlingWorkbench ? 2 : SEEDANCE_REFERENCE_LIMITS.images) - references.length)).map(async (blob, index) => {
+                blobs.slice(0, Math.max(0, imageLimit - references.length)).map(async (blob, index) => {
                     const image = await uploadImage(blob);
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
-            setReferences((value) => [...value, ...nextReferences].slice(0, isKlingWorkbench ? 2 : SEEDANCE_REFERENCE_LIMITS.images));
+            setReferences((value) => [...value, ...nextReferences].slice(0, imageLimit));
             message.success(`已读取 ${nextReferences.length} 张参考图`);
         } catch {
             message.error("剪切板里没有可读取的图片");
@@ -452,8 +479,9 @@ export default function VideoPage() {
                 message.error("剪切板里没有可读取的图片");
                 return;
             }
-            if (blob.size > SEEDANCE_REFERENCE_LIMITS.imageMaxBytes) {
-                message.warning("已忽略超过 30MB 的首尾帧图片");
+            const maxBytes = aiHubCapability?.references?.images?.maxBytes || SEEDANCE_REFERENCE_LIMITS.imageMaxBytes;
+            if (blob.size > maxBytes) {
+                message.warning(`已忽略超过 ${Math.floor(maxBytes / 1024 / 1024)}MB 的首尾帧图片`);
                 return;
             }
             const hideLoading = message.loading(slot === "first" ? "正在读取首帧..." : "正在读取尾帧...", 0);
@@ -471,6 +499,10 @@ export default function VideoPage() {
     };
 
     const addVideoReferencesFromClipboard = async () => {
+        if (!aiHubVideoLimit) {
+            message.warning("当前模型不支持参考视频");
+            return;
+        }
         try {
             const items = await navigator.clipboard.read();
             const blobs = await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("video/")).map((type) => item.getType(type))));
@@ -478,15 +510,16 @@ export default function VideoPage() {
                 message.error("剪切板里没有可读取的视频");
                 return;
             }
-            const usable = blobs.filter((blob) => blob.size <= SEEDANCE_REFERENCE_LIMITS.videoMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.videos - videoReferences.length);
-            if (blobs.some((blob) => blob.size > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes)) message.warning("已忽略超过 50MB 的参考视频");
+            const maxBytes = aiHubCapability?.references?.videos?.maxBytes || SEEDANCE_REFERENCE_LIMITS.videoMaxBytes;
+            const usable = blobs.filter((blob) => blob.size <= maxBytes).slice(0, aiHubVideoLimit - videoReferences.length);
+            if (blobs.some((blob) => blob.size > maxBytes)) message.warning(`已忽略超过 ${Math.floor(maxBytes / 1024 / 1024)}MB 的参考视频`);
             const nextVideoReferences = await Promise.all(
                 usable.map(async (blob, index) => {
                     const video = await uploadMediaFile(blob, "video-reference");
                     return { id: nanoid(), name: `clipboard-video-${index + 1}.mp4`, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs };
                 }),
             );
-            setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
+            setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, aiHubVideoLimit));
             message.success(`已读取 ${nextVideoReferences.length} 个参考视频`);
         } catch {
             message.error("剪切板里没有可读取的视频");
@@ -494,6 +527,10 @@ export default function VideoPage() {
     };
 
     const addAudioReferencesFromClipboard = async () => {
+        if (!aiHubAudioLimit) {
+            message.warning("当前模型不支持参考音频");
+            return;
+        }
         try {
             const items = await navigator.clipboard.read();
             const blobs = await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("audio/")).map((type) => item.getType(type))));
@@ -501,7 +538,7 @@ export default function VideoPage() {
                 message.error("剪切板里没有可读取的音频");
                 return;
             }
-            const usable = blobs.filter((blob) => blob.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length);
+            const usable = blobs.filter((blob) => blob.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes).slice(0, aiHubAudioLimit - audioReferences.length);
             if (blobs.some((blob) => blob.size > SEEDANCE_REFERENCE_LIMITS.audioMaxBytes)) message.warning("已忽略超过 15MB 的参考音频");
             const nextAudioReferences = filterAudioReferencesByDuration(
                 audioReferences,
@@ -513,7 +550,7 @@ export default function VideoPage() {
                 ),
                 message.warning,
             );
-            setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.audios));
+            setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, aiHubAudioLimit));
             message.success(`已读取 ${nextAudioReferences.length} 个参考音频`);
         } catch {
             message.error("剪切板里没有可读取的音频");
@@ -607,15 +644,27 @@ export default function VideoPage() {
                 return null;
             }
         }
-        if (!kling) {
+        if (!kling && isSeedanceVideoConfig({ ...configValue, model: modelValue, videoModel: modelValue })) {
             const videoReferenceError = seedanceVideoReferenceError(videoReferenceItems);
             if (videoReferenceError) {
                 message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
                 return null;
             }
         }
-        const frameReferencesEnabled = !kling && supportsVideoFrameReferences(modelValue);
-        return { text, model: modelValue, config: buildVideoConfig({ ...configValue, videoNegativePrompt: currentNegativePrompt }, modelValue), references: [...referenceItems].slice(0, kling ? 2 : referenceItems.length), firstFrame: frameReferencesEnabled ? firstFrameItem : null, lastFrame: frameReferencesEnabled ? lastFrameItem : null, videoReferences: kling ? [] : [...videoReferenceItems], audioReferences: kling ? [] : [...audioReferenceItems], taskCount: normalizeVideoCount(taskCountValue) };
+        const capability = getAIHubVideoCapability(modelValue);
+        const imageLimit = capability ? capability.references?.images?.max || 0 : kling ? 2 : referenceItems.length;
+        const videoLimit = capability ? capability.references?.videos?.max || 0 : kling ? 0 : videoReferenceItems.length;
+        const audioLimit = capability ? capability.references?.audios?.max || 0 : kling ? 0 : audioReferenceItems.length;
+        if (capability?.references?.videos?.required && videoReferenceItems.length < capability.references.videos.required) {
+            message.error(`当前模型需要至少 ${capability.references.videos.required} 个参考视频`);
+            return null;
+        }
+        if (capability?.references?.images?.required && referenceItems.length < capability.references.images.required) {
+            message.error(`当前模型需要至少 ${capability.references.images.required} 张参考图`);
+            return null;
+        }
+        const frameReferencesEnabled = !kling && (capability?.references?.frames === "pair" || supportsVideoFrameReferences(modelValue));
+        return { text, model: modelValue, config: buildVideoConfig({ ...configValue, videoNegativePrompt: currentNegativePrompt }, modelValue), references: [...referenceItems].slice(0, imageLimit), firstFrame: frameReferencesEnabled ? firstFrameItem : null, lastFrame: frameReferencesEnabled ? lastFrameItem : null, videoReferences: [...videoReferenceItems].slice(0, videoLimit), audioReferences: [...audioReferenceItems].slice(0, audioLimit), taskCount: normalizeVideoCount(taskCountValue) };
     };
 
     const submitGenerationSnapshot = async (snapshot: { text: string; model: string; config: AiConfig; references: ReferenceImage[]; firstFrame?: ReferenceImage | null; lastFrame?: ReferenceImage | null; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; taskCount: number }) => {
@@ -763,8 +812,12 @@ export default function VideoPage() {
     };
 
     const insertPickedAsset = async (payload: InsertAssetPayload) => {
-        const referenceImageLimit = isKlingWorkbench ? 2 : SEEDANCE_REFERENCE_LIMITS.images;
+        const referenceImageLimit = isKlingWorkbench ? 2 : aiHubImageLimit;
         const insertImage = async () => {
+            if (!referenceImageLimit) {
+                message.warning("当前模型不支持参考图");
+                return;
+            }
             if (payload.kind !== "image") {
                 message.warning("请选择图片素材");
                 return;
@@ -780,19 +833,19 @@ export default function VideoPage() {
             slot === "first" ? setFirstFrame(next) : setLastFrame(next);
         };
         const insertVideo = () => {
-            if (isKlingWorkbench) {
-                message.warning("当前 Kling v2.6 不支持参考视频");
+            if (!aiHubVideoLimit) {
+                message.warning("当前模型不支持参考视频");
                 return;
             }
             if (payload.kind !== "video") {
                 message.warning("请选择视频素材");
                 return;
             }
-            setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: payload.mimeType || "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height, bytes: payload.bytes }].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
+            setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: payload.mimeType || "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height, bytes: payload.bytes }].slice(0, aiHubVideoLimit));
         };
         const insertAudio = () => {
-            if (isKlingWorkbench) {
-                message.warning("当前 Kling v2.6 不支持参考音频");
+            if (!aiHubAudioLimit) {
+                message.warning("当前模型不支持参考音频");
                 return;
             }
             if (payload.kind !== "audio") {
@@ -800,7 +853,7 @@ export default function VideoPage() {
                 return;
             }
             const next = filterAudioReferencesByDuration(audioReferences, [{ id: nanoid(), name: payload.title, type: payload.mimeType || "audio/mpeg", url: payload.url, storageKey: payload.storageKey, durationMs: payload.durationMs }], message.warning);
-            setAudioReferences((value) => [...value, ...next].slice(0, SEEDANCE_REFERENCE_LIMITS.audios));
+            setAudioReferences((value) => [...value, ...next].slice(0, aiHubAudioLimit));
         };
 
         if (assetPickerTarget === "element") {
@@ -1336,7 +1389,12 @@ function WorkbenchPanel({
     bottomSettingsCollapsed?: boolean;
     setBottomSettingsCollapsed?: (value: boolean) => void;
 }) {
-    const frameReferencesEnabled = supportsVideoFrameReferences(model);
+    const aiHubCapability = getAIHubVideoCapability(model);
+    const frameReferencesEnabled = aiHubCapability?.references?.frames === "pair" || supportsVideoFrameReferences(model);
+    const imageReferencesEnabled = !aiHubCapability || Boolean(aiHubCapability.references?.images?.max);
+    const videoReferencesEnabled = !aiHubCapability || Boolean(aiHubCapability.references?.videos?.max);
+    const audioReferencesEnabled = !aiHubCapability || Boolean(aiHubCapability.references?.audios?.max);
+    const anyReferencesEnabled = imageReferencesEnabled || videoReferencesEnabled || audioReferencesEnabled;
     const audioGenerationEnabled = supportsVideoAudioGeneration(model);
     const generateAudio = boolConfig(config.videoGenerateAudio, false);
     const klingBottomConfig = resolveKlingWorkbenchConfig(config, model);
@@ -1399,6 +1457,13 @@ function WorkbenchPanel({
                             </label>
                             {klingBottom ? (
                                 <KlingV26BottomSettings config={config} updateConfig={updateConfig} generateAudio={generateAudio} isKlingV3={klingBottomVariant === "v3"} />
+                            ) : aiHubCapability ? (
+                                <>
+                                    {aiHubCapability.aspectRatio ? <QuickSelect label={model.startsWith("grok-") ? "尺寸" : "画幅"} value={normalizeAIHubSelectValue(aiHubCapability.aspectRatio, config.size)} options={[...aiHubCapability.aspectRatio.options]} onChange={(value) => updateConfig("size", value)} /> : null}
+                                    {aiHubCapability.duration?.mode === "select" ? <QuickSelect label="秒数" value={normalizeAIHubSelectValue(aiHubCapability.duration, config.videoSeconds)} options={[...aiHubCapability.duration.options]} onChange={(value) => updateConfig("videoSeconds", value)} /> : null}
+                                    {aiHubCapability.duration?.mode === "range" ? <QuickNumber label="秒数" value={String(normalizeAIHubRangeValue(aiHubCapability.duration, config.videoSeconds))} min={aiHubCapability.duration.min} max={aiHubCapability.duration.max} onChange={(value) => updateConfig("videoSeconds", value)} /> : null}
+                                    <QuickInfo label="输出" value={[aiHubCapability.resolution?.label, aiHubCapability.duration?.mode === "fixed" ? aiHubCapability.duration.label : ""].filter(Boolean).join(" · ") || "由模型决定"} />
+                                </>
                             ) : (
                                 <>
                                     <QuickSelect label="清晰度" value={normalizeVideoResolutionValue(config.vquality)} options={quickResolutionOptions} onChange={(value) => updateConfig("vquality", value)} />
@@ -1409,7 +1474,7 @@ function WorkbenchPanel({
                                 </>
                             )}
                             <QuickNumber label="任务" value={String(taskCount)} min={1} max={6} onChange={(value) => onTaskCountChange(normalizeVideoCount(value))} />
-                            <ReferenceQuickActions imageCount={references.length} videoCount={videoReferences.length} audioCount={audioReferences.length} onPasteReferences={onPasteReferences} onUploadReferences={onUploadReferences} />
+                            {anyReferencesEnabled ? <ReferenceQuickActions imageCount={references.length} videoCount={videoReferences.length} audioCount={audioReferences.length} onPasteReferences={onPasteReferences} onUploadReferences={onUploadReferences} /> : null}
                             <Button type="primary" className="hidden h-11 min-w-28 items-center justify-center gap-1.5 rounded-xl lg:flex" icon={<Sparkles className="size-4" />} disabled={!canGenerate} onClick={onGenerate}>
                                 {pendingCount ? `${pendingCount} 生成中` : "开始创作"}
                             </Button>
@@ -1417,9 +1482,9 @@ function WorkbenchPanel({
                         {firstFrame || lastFrame || references.length || videoReferences.length || audioReferences.length ? (
                             <div className="grid gap-2">
                                 {firstFrame || lastFrame ? <FrameReferenceStrip firstFrame={firstFrame} lastFrame={lastFrame} compact onUploadFrame={onUploadFrame} onRemoveFrame={onRemoveFrame} /> : null}
-                                {references.length ? <ReferenceImageStrip references={references} compact onRemoveReference={onRemoveReference} onMoveReference={onMoveReference} /> : null}
-                                {videoReferences.length ? <ReferenceVideoStrip references={videoReferences} compact onRemoveReference={onRemoveVideoReference} onMoveReference={onMoveVideoReference} /> : null}
-                                {audioReferences.length ? <ReferenceAudioStrip references={audioReferences} compact onRemoveReference={onRemoveAudioReference} onMoveReference={onMoveAudioReference} /> : null}
+                                {imageReferencesEnabled && references.length ? <ReferenceImageStrip references={references} compact onRemoveReference={onRemoveReference} onMoveReference={onMoveReference} /> : null}
+                                {videoReferencesEnabled && videoReferences.length ? <ReferenceVideoStrip references={videoReferences} compact onRemoveReference={onRemoveVideoReference} onMoveReference={onMoveVideoReference} /> : null}
+                                {audioReferencesEnabled && audioReferences.length ? <ReferenceAudioStrip references={audioReferences} compact onRemoveReference={onRemoveAudioReference} onMoveReference={onMoveAudioReference} /> : null}
                             </div>
                         ) : null}
                     </div>
@@ -1450,36 +1515,36 @@ function WorkbenchPanel({
                         <FrameReferenceStrip firstFrame={firstFrame} lastFrame={lastFrame} onPasteFrame={onPasteFrame} onUploadFrame={onUploadFrame} onOpenAssetPicker={onOpenAssetPicker} onRemoveFrame={onRemoveFrame} />
                     </WorkbenchSection>
                 ) : null}
-                <WorkbenchSection title="参考图" count={references.length}>
+                {imageReferencesEnabled ? <WorkbenchSection title="参考图" count={references.length}>
                     <div className="space-y-2">
                         <div className="flex flex-wrap gap-1">
                             <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={onPasteReferences}>剪切板</Button>
                             <Button size="small" icon={<Upload className="size-3.5" />} onClick={onUploadReferences}>上传</Button>
                             <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => onOpenAssetPicker("image")}>从素材库选择</Button>
                         </div>
-                        <ReferenceImageStrip references={references} onRemoveReference={onRemoveReference} onMoveReference={onMoveReference} />
+                        <ReferenceImageStrip references={references} limit={aiHubCapability?.references?.images?.max} onRemoveReference={onRemoveReference} onMoveReference={onMoveReference} />
                     </div>
-                </WorkbenchSection>
-                <WorkbenchSection title="参考视频" count={videoReferences.length}>
+                </WorkbenchSection> : null}
+                {videoReferencesEnabled ? <WorkbenchSection title="参考视频" count={videoReferences.length}>
                     <div className="space-y-2">
                         <div className="flex flex-wrap gap-1">
                             <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={onPasteVideoReferences}>剪贴板</Button>
                             <Button size="small" icon={<Upload className="size-3.5" />} onClick={onUploadReferences}>上传</Button>
                             <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => onOpenAssetPicker("video")}>从素材库选择</Button>
                         </div>
-                        <ReferenceVideoStrip references={videoReferences} onRemoveReference={onRemoveVideoReference} onMoveReference={onMoveVideoReference} />
+                        <ReferenceVideoStrip references={videoReferences} limit={aiHubCapability?.references?.videos?.max} note={aiHubCapability?.references?.videos?.note} onRemoveReference={onRemoveVideoReference} onMoveReference={onMoveVideoReference} />
                     </div>
-                </WorkbenchSection>
-                <WorkbenchSection title="参考音频" count={audioReferences.length}>
+                </WorkbenchSection> : null}
+                {audioReferencesEnabled ? <WorkbenchSection title="参考音频" count={audioReferences.length}>
                     <div className="space-y-2">
                         <div className="flex flex-wrap gap-1">
                             <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={onPasteAudioReferences}>剪贴板</Button>
                             <Button size="small" icon={<Upload className="size-3.5" />} onClick={onUploadReferences}>上传</Button>
                             <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => onOpenAssetPicker("audio")}>从素材库选择</Button>
                         </div>
-                        <ReferenceAudioStrip references={audioReferences} onRemoveReference={onRemoveAudioReference} onMoveReference={onMoveAudioReference} />
+                        <ReferenceAudioStrip references={audioReferences} limit={aiHubCapability?.references?.audios?.max} note={aiHubCapability?.references?.audios?.note} onRemoveReference={onRemoveAudioReference} onMoveReference={onMoveAudioReference} />
                     </div>
-                </WorkbenchSection>
+                </WorkbenchSection> : null}
                 {motionControl ? <CharacterOrientationSetting value={config.videoCharacterOrientation} onChange={(value) => updateConfig("videoCharacterOrientation", value)} /> : null}
                 <GenerationSettings config={config} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 <WorkbenchSection title="任务数量">
@@ -1574,7 +1639,7 @@ function FrameReferenceSlot({ label, reference, compact, onUpload, onRemove }: {
     );
 }
 
-function ReferenceImageStrip({ references, compact = false, onRemoveReference, onMoveReference }: { references: ReferenceImage[]; compact?: boolean; onRemoveReference: (id: string) => void; onMoveReference: (index: number, offset: number) => void }) {
+function ReferenceImageStrip({ references, compact = false, limit = 9, onRemoveReference, onMoveReference }: { references: ReferenceImage[]; compact?: boolean; limit?: number; onRemoveReference: (id: string) => void; onMoveReference: (index: number, offset: number) => void }) {
     return (
         <div className={`hover-scrollbar hover-scrollbar-hint flex w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 overscroll-x-contain dark:border-stone-700 ${compact ? "min-h-14" : "min-h-24 pb-3"}`}>
             {references.map((item, index) => (
@@ -1587,12 +1652,12 @@ function ReferenceImageStrip({ references, compact = false, onRemoveReference, o
                     </button>
                 </div>
             ))}
-            {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">暂无参考图，最多 9 张</div> : null}
+            {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">暂无参考图，最多 {limit} 张</div> : null}
         </div>
     );
 }
 
-function ReferenceVideoStrip({ references, compact = false, onRemoveReference, onMoveReference }: { references: ReferenceVideo[]; compact?: boolean; onRemoveReference: (id: string) => void; onMoveReference: (index: number, offset: number) => void }) {
+function ReferenceVideoStrip({ references, compact = false, limit = 3, note, onRemoveReference, onMoveReference }: { references: ReferenceVideo[]; compact?: boolean; limit?: number; note?: string; onRemoveReference: (id: string) => void; onMoveReference: (index: number, offset: number) => void }) {
     return (
         <div className={`hover-scrollbar hover-scrollbar-hint flex w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 overscroll-x-contain dark:border-stone-700 ${compact ? "min-h-14" : "min-h-24 pb-3"}`}>
             {references.map((item, index) => (
@@ -1605,12 +1670,12 @@ function ReferenceVideoStrip({ references, compact = false, onRemoveReference, o
                     </button>
                 </div>
             ))}
-            {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">暂无参考视频，最多 3 个</div> : null}
+            {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">暂无参考视频，最多 {limit} 个{note ? `，${note}` : ""}</div> : null}
         </div>
     );
 }
 
-function ReferenceAudioStrip({ references, compact = false, onRemoveReference, onMoveReference }: { references: ReferenceAudio[]; compact?: boolean; onRemoveReference: (id: string) => void; onMoveReference: (index: number, offset: number) => void }) {
+function ReferenceAudioStrip({ references, compact = false, limit = 3, note, onRemoveReference, onMoveReference }: { references: ReferenceAudio[]; compact?: boolean; limit?: number; note?: string; onRemoveReference: (id: string) => void; onMoveReference: (index: number, offset: number) => void }) {
     return (
         <div className={`hover-scrollbar hover-scrollbar-hint flex w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 overscroll-x-contain dark:border-stone-700 ${compact ? "min-h-14" : "min-h-24 pb-3"}`}>
             {references.map((item, index) => (
@@ -1627,7 +1692,7 @@ function ReferenceAudioStrip({ references, compact = false, onRemoveReference, o
                     </button>
                 </div>
             ))}
-            {!references.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">暂无参考音频，最多 3 个，mp3/wav，单个 15MB 内</div> : null}
+            {!references.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">暂无参考音频，最多 {limit} 个{note ? `，${note}` : ""}</div> : null}
         </div>
     );
 }
@@ -1724,6 +1789,15 @@ function QuickSwitch({ label, checked, onChange }: { label: string; checked: boo
                 <Switch size="small" checked={checked} onChange={onChange} />
             </span>
         </label>
+    );
+}
+
+function QuickInfo({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="grid gap-1 text-xs text-stone-500 dark:text-stone-400">
+            {label}
+            <div className="flex h-11 items-center rounded-xl border border-stone-200 bg-background px-3 text-sm text-stone-700 dark:border-stone-800 dark:text-stone-200">{value}</div>
+        </div>
     );
 }
 

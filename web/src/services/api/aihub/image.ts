@@ -1,4 +1,5 @@
 import { isAIHubGeminiImageModel } from "@/lib/aihub-models";
+import { getAIHubImageCapability, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
 
 export type AIHubImageOptions = {
     model: string;
@@ -10,26 +11,68 @@ export type AIHubImageOptions = {
 };
 
 export function createAIHubImageGenerationBody({ model, prompt, n, size, quality, references = [] }: AIHubImageOptions) {
+    const capability = getAIHubImageCapability(model);
     const body: Record<string, unknown> = { model, prompt };
-    if (n && n > 1) body.n = model.toLowerCase().startsWith("gpt-image-2") ? Math.min(n, 4) : n;
-    if (size) body.size = normalizeAIHubImageSize(model, size);
-    if (quality && quality !== "auto") body.quality = quality;
-    if (references.length) {
-        if (isAIHubGeminiImageModel(model)) body.image = references.length === 1 ? references[0] : references;
-        else if (model.toLowerCase() === "gpt-image-2-1k") body.reference_image_urls = references.slice(0, 6);
+    const count = Math.min(Math.max(1, n || 1), capability?.count?.max || 1);
+    if (count > 1) body.n = count;
+    if (capability?.size) body.size = normalizeAIHubSelectValue(capability.size, normalizeAIHubImageSize(model, size || capability.size.default));
+    if (capability?.quality && quality && quality !== "auto") body.quality = normalizeAIHubSelectValue(capability.quality, quality);
+    const imageLimit = capability?.references?.images.max || references.length;
+    assertReferenceLimit(capability, references);
+    const safeReferences = references.slice(0, imageLimit);
+    if (safeReferences.length) {
+        if (isAIHubGeminiImageModel(model)) body.image = safeReferences.length === 1 ? safeReferences[0] : safeReferences;
+        else if (model.toLowerCase() === "gpt-image-2-1k") body.reference_image_urls = safeReferences;
     }
     return body;
 }
 
 export function createAIHubImageEditForm({ model, prompt, n, size, quality }: AIHubImageOptions, files: File[]) {
+    const capability = getAIHubImageCapability(model);
     const body = new FormData();
     body.set("model", model);
     body.set("prompt", prompt);
-    if (n && n > 1) body.set("n", String(Math.min(n, 4)));
-    if (size) body.set("size", normalizeAIHubImageSize(model, size));
-    if (quality && quality !== "auto") body.set("quality", quality);
+    const count = Math.min(Math.max(1, n || 1), capability?.count?.max || 1);
+    if (count > 1) body.set("n", String(count));
+    if (capability?.size) body.set("size", normalizeAIHubSelectValue(capability.size, normalizeAIHubImageSize(model, size || capability.size.default)));
+    if (capability?.quality && quality && quality !== "auto") body.set("quality", normalizeAIHubSelectValue(capability.quality, quality));
+    assertReferenceFileLimit(capability, files);
     files.forEach((file) => body.append("image", file));
     return body;
+}
+
+function assertReferenceLimit(capability: ReturnType<typeof getAIHubImageCapability>, references: string[]) {
+    const limit = capability?.references?.images;
+    if (!limit) {
+        if (references.length) throw new Error(`${capability?.model || "当前模型"} 不支持参考图`);
+        return;
+    }
+    if (references.length > limit.max) throw new Error(`${capability?.model} 最多支持 ${limit.max} 张参考图`);
+    const bytes = references.map(dataImageBytes).filter((value): value is number => typeof value === "number");
+    if (limit.maxBytes && bytes.some((value) => value > limit.maxBytes!)) throw new Error(`${capability?.model} 单张参考图不能超过 ${formatMB(limit.maxBytes)}`);
+    if (limit.maxTotalBytes && bytes.reduce((sum, value) => sum + value, 0) > limit.maxTotalBytes) throw new Error(`${capability?.model} 参考图总大小不能超过 ${formatMB(limit.maxTotalBytes)}`);
+}
+
+function assertReferenceFileLimit(capability: ReturnType<typeof getAIHubImageCapability>, files: File[]) {
+    const limit = capability?.references?.images;
+    if (!limit) {
+        if (files.length) throw new Error(`${capability?.model || "当前模型"} 不支持参考图`);
+        return;
+    }
+    if (files.length > limit.max) throw new Error(`${capability?.model} 最多支持 ${limit.max} 张参考图`);
+    if (limit.maxBytes && files.some((file) => file.size > limit.maxBytes!)) throw new Error(`${capability?.model} 单张参考图不能超过 ${formatMB(limit.maxBytes)}`);
+    if (limit.maxTotalBytes && files.reduce((sum, file) => sum + file.size, 0) > limit.maxTotalBytes) throw new Error(`${capability?.model} 参考图总大小不能超过 ${formatMB(limit.maxTotalBytes)}`);
+}
+
+function dataImageBytes(value: string) {
+    const match = value.match(/^data:image\/[\w.+-]+;base64,([\s\S]+)$/i);
+    if (!match) return undefined;
+    const base64 = match[1].replace(/\s/g, "");
+    return Math.floor((base64.length * 3) / 4) - (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0);
+}
+
+function formatMB(bytes: number) {
+    return `${Math.floor(bytes / 1024 / 1024)}MB`;
 }
 
 function normalizeAIHubImageSize(model: string, size: string) {
@@ -43,6 +86,7 @@ function normalizeAIHubImageSize(model: string, size: string) {
 }
 
 export function createAIHubChatImageBody(model: string, prompt: string, references: string[]) {
+    assertReferenceLimit(getAIHubImageCapability(model), references);
     const content: string | Array<Record<string, unknown>> = references.length ? [{ type: "text", text: prompt }, ...references.map((url) => ({ type: "image_url", image_url: { url } }))] : prompt;
     return { model, messages: [{ role: "user", content }] };
 }

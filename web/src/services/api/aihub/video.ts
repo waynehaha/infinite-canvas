@@ -1,4 +1,5 @@
 import { isAIHubOmniModel, isAIHubSeedanceModel } from "@/lib/aihub-models";
+import { getAIHubImageCapability, getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
 
 export type AIHubMediaValue = string | File;
 
@@ -17,13 +18,29 @@ export type AIHubVideoBuildInput = {
 
 export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
     const model = input.model.toLowerCase();
+    const capability = getAIHubVideoCapability(input.model);
+    const imageCapability = getAIHubImageCapability(input.model);
+    const aspectRatio = capability?.aspectRatio ? normalizeAIHubSelectValue(capability.aspectRatio, input.aspectRatio) : imageCapability?.size ? normalizeAIHubSelectValue(imageCapability.size, input.aspectRatio) : input.aspectRatio;
+    const seconds = capability?.duration?.mode === "fixed"
+        ? String(capability.duration.value)
+        : capability?.duration?.mode === "range"
+          ? String(normalizeAIHubRangeValue(capability.duration, input.seconds))
+          : capability?.duration?.mode === "select"
+            ? normalizeAIHubSelectValue(capability.duration, input.seconds)
+            : input.seconds;
     const body = new FormData();
     body.set("model", input.model);
     body.set("prompt", input.prompt);
+    if (capability) {
+        assertMediaLimit("参考图", capability.references?.images, [...input.references, ...(input.firstFrame ? [input.firstFrame] : []), ...(input.lastFrame ? [input.lastFrame] : [])]);
+        assertMediaLimit("参考视频", capability.references?.videos, input.videoReferences);
+        assertMediaLimit("参考音频", capability.references?.audios, input.audioReferences);
+    }
+    if (imageCapability) assertMediaLimit("参考图", imageCapability.references?.images, input.references);
 
     if (model === "gpt-image-2-2k" || model === "gpt-image-2-3.5k") {
         if (input.references.length > 6) throw new Error("GPT-Image 高清模型最多支持 6 张参考图");
-        body.set("aspect_ratio", input.aspectRatio);
+        body.set("aspect_ratio", aspectRatio);
         if (input.references[0]) body.set("image_url", input.references[0]);
         if (input.references.length > 1) body.set("reference_image_urls", JSON.stringify(input.references.slice(0, 6)));
         return body;
@@ -33,8 +50,8 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
         if (input.references.length > 7) throw new Error("Grok 视频最多支持 7 张参考图");
         const references = input.references.slice(0, 7);
         if (model.includes("1.5") && !references.length) throw new Error("Grok Imagine 1.5 需要至少一张参考图");
-        body.set("seconds", input.seconds);
-        body.set("size", input.aspectRatio);
+        body.set("seconds", seconds);
+        body.set("size", aspectRatio);
         if (references[0]) body.set("image_reference", references[0]);
         if (references.length > 1) body.set("images", JSON.stringify(references));
         return body;
@@ -54,8 +71,8 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
         if (input.references.length > 9) throw new Error("Seedance 最多支持 9 张参考图");
         if (input.videoReferences.length > 3) throw new Error("Seedance 最多支持 3 个参考视频");
         if (input.audioReferences.length > 3) throw new Error("Seedance 最多支持 3 个参考音频");
-        body.set("duration", input.seconds);
-        body.set("aspect_ratio", input.aspectRatio);
+        body.set("duration", seconds);
+        body.set("aspect_ratio", aspectRatio);
         if (input.firstFrame || input.lastFrame) {
             if (!input.firstFrame || !input.lastFrame) throw new Error("Seedance 首尾帧模式必须同时提供首帧和尾帧");
             if (input.references.length || input.videoReferences.length || input.audioReferences.length) throw new Error("Seedance 首尾帧模式不能同时添加其他参考素材");
@@ -75,8 +92,8 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
         if (input.references.length > 5) throw new Error("Omni 最多支持 5 张参考图");
         if (input.videoReferences.length > 2) throw new Error("Omni V2V 最多支持 2 个参考视频");
         [...input.references, input.firstFrame, input.lastFrame].forEach(assertAIHubOmniImageSize);
-        body.set("seconds", input.seconds);
-        body.set("aspect_ratio", input.aspectRatio);
+        body.set("seconds", seconds);
+        body.set("aspect_ratio", aspectRatio);
         if (model.includes("v2v")) {
             if (!input.videoReferences.length) throw new Error("Omni V2V 需要至少一个参考视频");
             appendOmniVideos(body, input.videoReferences.slice(0, 2));
@@ -90,8 +107,8 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
         return body;
     }
 
-    body.set("seconds", input.seconds);
-    body.set("aspect_ratio", input.aspectRatio);
+    body.set("seconds", seconds);
+    body.set("aspect_ratio", aspectRatio);
     body.set("resolution", input.resolution);
     if (input.references[0]) body.set("image_url", input.references[0]);
     if (input.references.length > 1) body.set("images", JSON.stringify(input.references));
@@ -111,6 +128,24 @@ function assertAIHubOmniImageSize(value?: string) {
     const base64 = match[1].replace(/\s/g, "");
     const bytes = Math.floor((base64.length * 3) / 4) - (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0);
     if (bytes > 8 * 1024 * 1024) throw new Error("Omni 单张参考图片不能超过 8MB");
+}
+
+function assertMediaLimit(label: string, limit: { max: number; maxBytes?: number; maxTotalBytes?: number } | undefined, values: AIHubMediaValue[]) {
+    if (!limit) {
+        if (values.length) throw new Error(`当前模型不支持${label}`);
+        return;
+    }
+    if (values.length > limit.max) throw new Error(`${label}最多支持 ${limit.max} 个`);
+    const sizes = values.map((value) => value instanceof File ? value.size : dataMediaBytes(value)).filter((value): value is number => typeof value === "number");
+    if (limit.maxBytes && sizes.some((size) => size > limit.maxBytes!)) throw new Error(`${label}单个不能超过 ${Math.floor(limit.maxBytes / 1024 / 1024)}MB`);
+    if (limit.maxTotalBytes && sizes.reduce((sum, size) => sum + size, 0) > limit.maxTotalBytes) throw new Error(`${label}总大小不能超过 ${Math.floor(limit.maxTotalBytes / 1024 / 1024)}MB`);
+}
+
+function dataMediaBytes(value: string) {
+    const match = value.match(/^data:[^;]+;base64,([\s\S]+)$/i);
+    if (!match) return undefined;
+    const base64 = match[1].replace(/\s/g, "");
+    return Math.floor((base64.length * 3) / 4) - (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0);
 }
 
 function appendMedia(body: FormData, field: string, values: AIHubMediaValue[]) {

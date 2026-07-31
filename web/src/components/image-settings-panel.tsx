@@ -1,9 +1,10 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
+import { getAIHubImageCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue, type AIHubImageCapability, type AIHubOption } from "@/lib/aihub-model-capabilities";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
@@ -43,10 +44,12 @@ type ImageSettingsPanelProps = {
     className?: string;
     maxCount?: number;
     quickCount?: number;
+    modelName?: string;
 };
 
-export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, showSize = true, showCount = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
+export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, showSize = true, showCount = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10, modelName }: ImageSettingsPanelProps) {
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
+    const capability = getAIHubImageCapability(modelName || config.model || config.imageModel);
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
@@ -62,6 +65,26 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
         const height = key === "height" ? next : dimensions.height;
         onConfigChange("size", `${alignDimension(width, snapDimensionToStep)}x${alignDimension(height, snapDimensionToStep)}`);
     };
+
+    useEffect(() => {
+        if (!capability) return;
+        if (capability.quality) {
+            const next = normalizeAIHubSelectValue(capability.quality, config.quality);
+            if (next !== config.quality) onConfigChange("quality", next);
+        }
+        if (capability.size) {
+            const next = normalizeAIHubSelectValue(capability.size, config.size);
+            if (next !== config.size) onConfigChange("size", next);
+        }
+        if (capability.count) {
+            const next = String(normalizeAIHubRangeValue(capability.count, config.count));
+            if (next !== config.count) onConfigChange("count", next);
+        }
+    }, [capability, config.count, config.quality, config.size, onConfigChange]);
+
+    if (capability) {
+        return <AIHubImageSettingsPanel capability={capability} config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} showSize={showSize} showCount={showCount} className={className} />;
+    }
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -141,6 +164,68 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
             </div>
         </ImageSettingsTheme>
     );
+}
+
+function AIHubImageSettingsPanel({ capability, config, onConfigChange, theme, showTitle, showSize, showCount, className }: { capability: AIHubImageCapability; config: AiConfig; onConfigChange: ImageSettingsPanelProps["onConfigChange"]; theme: CanvasTheme; showTitle: boolean; showSize: boolean; showCount: boolean; className: string }) {
+    const quality = capability.quality ? normalizeAIHubSelectValue(capability.quality, config.quality) : "";
+    const size = capability.size ? normalizeAIHubSelectValue(capability.size, config.size) : "";
+    const count = capability.count ? normalizeAIHubRangeValue(capability.count, config.count) : 1;
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">图像设置</div> : null}
+                <CapabilitySummary items={capability.fixedSummary} theme={theme} />
+                {capability.quality ? (
+                    <div className="space-y-2.5">
+                        <SettingTitle color={theme.node.muted}>质量</SettingTitle>
+                        <div className="grid grid-cols-4 gap-2.5">
+                            {capability.quality.options.map((item) => <OptionPill key={item.value} selected={quality === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>{item.label}</OptionPill>)}
+                        </div>
+                    </div>
+                ) : null}
+                {showSize && capability.size ? (
+                    <div className="space-y-2.5">
+                        <SettingTitle color={theme.node.muted}>画幅</SettingTitle>
+                        <div className="grid grid-cols-3 gap-2.5">
+                            {capability.size.options.map((item) => <CapabilityOption key={item.value} option={item} selected={size === item.value} theme={theme} onClick={() => onConfigChange("size", item.value)} />)}
+                        </div>
+                    </div>
+                ) : null}
+                {showCount && capability.count && capability.count.max > 1 ? (
+                    <div className="space-y-2.5">
+                        <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
+                        <div className="grid grid-cols-4 gap-2.5">
+                            {(capability.count.quick || []).map((value) => <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>{value} 张</OptionPill>)}
+                        </div>
+                    </div>
+                ) : null}
+                {capability.references?.images ? <div className="text-[11px] leading-5" style={{ color: theme.node.muted }}>参考图最多 {capability.references.images.max} 张{capability.references.images.note ? `，${capability.references.images.note}` : ""}</div> : null}
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
+function CapabilitySummary({ items, theme }: { items: readonly string[]; theme: CanvasTheme }) {
+    if (!items.length) return null;
+    return <div className="flex flex-wrap gap-x-3 gap-y-1 rounded-xl border px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, background: theme.node.fill, color: theme.node.muted }}>{items.map((item) => <span key={item}>{item}</span>)}</div>;
+}
+
+function CapabilityOption({ option, selected, theme, onClick }: { option: AIHubOption; selected: boolean; theme: CanvasTheme; onClick: () => void }) {
+    const dimensions = capabilityOptionDimensions(option.value);
+    return (
+        <button type="button" className="flex min-h-16 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80" style={{ borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }} onClick={onClick}>
+            <AspectIcon type={option.value === "auto" ? "auto" : "ratio"} width={dimensions.width} height={dimensions.height} color={theme.node.text} />
+            <span>{option.label}</span>
+            {option.detail ? <span className="text-[10px] leading-none opacity-55">{option.detail}</span> : null}
+        </button>
+    );
+}
+
+function capabilityOptionDimensions(value: string) {
+    const pixelMatch = value.match(/^(\d+)x(\d+)$/);
+    if (pixelMatch) return { width: Number(pixelMatch[1]), height: Number(pixelMatch[2]) };
+    const ratioMatch = value.match(/^(\d+):(\d+)$/);
+    return ratioMatch ? { width: Number(ratioMatch[1]), height: Number(ratioMatch[2]) } : { width: 1, height: 1 };
 }
 
 export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; children: ReactNode }) {

@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { audioFormatOptions, audioSpeedLabel, audioVoiceOptions, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { getAIHubAudioCapability } from "@/lib/aihub-model-capabilities";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import type { AiConfig } from "@/stores/use-config-store";
 
@@ -17,9 +18,11 @@ type AudioSettingsPanelProps = {
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
+    modelName?: string;
 };
 
-export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: AudioSettingsPanelProps) {
+export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", modelName }: AudioSettingsPanelProps) {
+    const capability = getAIHubAudioCapability(modelName || config.model || config.audioModel);
     const voice = normalizeAudioVoiceValue(config.audioVoice);
     const format = normalizeAudioFormatValue(config.audioFormat);
     const speed = normalizeAudioSpeedValue(config.audioSpeed);
@@ -28,6 +31,13 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">音频设置</div> : null}
+                {capability ? (
+                    <div className="space-y-2 rounded-xl border px-3 py-3" style={{ borderColor: theme.node.stroke, background: theme.node.fill }}>
+                        <div className="text-sm font-medium">音乐生成模式</div>
+                        <div className="text-xs leading-5" style={{ color: theme.node.muted }}>{capability.fixedSummary.join(" · ")}</div>
+                    </div>
+                ) : (
+                    <>
                 <SettingGroup title="声音" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
                         {audioVoiceOptions.map((item) => (
@@ -77,6 +87,8 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         onMouseDown={(event) => event.stopPropagation()}
                     />
                 </SettingGroup>
+                    </>
+                )}
             </div>
         </ImageSettingsTheme>
     );

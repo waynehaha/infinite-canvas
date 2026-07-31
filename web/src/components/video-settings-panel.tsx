@@ -1,11 +1,12 @@
 "use client";
 
-import { type CSSProperties, type ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useEffect } from "react";
 import { Input, Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, isSeedanceFastOrMiniModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
+import { getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue, type AIHubVideoCapability } from "@/lib/aihub-model-capabilities";
 import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
 import { channelIdForActiveModel, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
 
@@ -54,6 +55,11 @@ type VideoSettingsPanelProps = {
 };
 
 export function VideoSettingsPanel({ config, modelName, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", hideNegativePrompt = false, visualOnly = false }: VideoSettingsPanelProps) {
+    const activeModel = modelName || config.model || config.videoModel;
+    const aiHubCapability = getAIHubVideoCapability(activeModel);
+    if (aiHubCapability) {
+        return <AIHubVideoSettingsPanel capability={aiHubCapability} config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} visualOnly={visualOnly} />;
+    }
     if (isAPIMartKlingV26Config(config, modelName || config.model || config.videoModel) || isAPIMartKlingV3Config(config, modelName || config.model || config.videoModel) || isKIEKlingV3Config(config, modelName || config.model || config.videoModel)) {
         return <KlingV26VideoSettingsPanel config={config} modelName={modelName} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} hideNegativePrompt={hideNegativePrompt} visualOnly={visualOnly} />;
     }
@@ -144,6 +150,85 @@ export function VideoSettingsPanel({ config, modelName, onConfigChange, theme, s
             </div>
         </ImageSettingsTheme>
     );
+}
+
+function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, showTitle, className, visualOnly }: { capability: AIHubVideoCapability; config: AiConfig; onConfigChange: VideoSettingsPanelProps["onConfigChange"]; theme: CanvasTheme; showTitle: boolean; className: string; visualOnly: boolean }) {
+    const ratio = capability.aspectRatio ? normalizeAIHubSelectValue(capability.aspectRatio, config.size) : "";
+    const duration = capability.duration?.mode === "select" ? normalizeAIHubSelectValue(capability.duration, config.videoSeconds) : capability.duration?.mode === "range" ? normalizeAIHubRangeValue(capability.duration, config.videoSeconds) : capability.duration?.value;
+
+    useEffect(() => {
+        if (capability.aspectRatio) {
+            const next = normalizeAIHubSelectValue(capability.aspectRatio, config.size);
+            if (next !== config.size) onConfigChange("size", next);
+        }
+        if (capability.duration?.mode === "select") {
+            const next = normalizeAIHubSelectValue(capability.duration, config.videoSeconds);
+            if (next !== config.videoSeconds) onConfigChange("videoSeconds", next);
+        } else if (capability.duration?.mode === "range") {
+            const next = String(normalizeAIHubRangeValue(capability.duration, config.videoSeconds));
+            if (next !== config.videoSeconds) onConfigChange("videoSeconds", next);
+        } else if (capability.duration?.mode === "fixed") {
+            const next = String(capability.duration.value);
+            if (next !== config.videoSeconds) onConfigChange("videoSeconds", next);
+        }
+        if (capability.resolution && capability.resolution.value !== config.vquality) onConfigChange("vquality", String(capability.resolution.value));
+    }, [capability, config.size, config.videoSeconds, config.vquality, onConfigChange]);
+
+    const referenceSummary = [
+        capability.references?.images ? `参考图最多 ${capability.references.images.max} 张` : "",
+        capability.references?.videos
+            ? capability.references.videos.required === capability.references.videos.max
+                ? `需要 ${capability.references.videos.max} 个参考视频`
+                : `参考视频 ${capability.references.videos.required ? `${capability.references.videos.required}–` : "最多 "}${capability.references.videos.max} 个`
+            : "",
+        capability.references?.audios ? `参考音频最多 ${capability.references.audios.max} 个` : "",
+        capability.references?.frames ? "支持成对首尾帧" : "",
+    ].filter(Boolean);
+
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
+                <div className="flex flex-wrap gap-x-3 gap-y-1 rounded-xl border px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, background: theme.node.fill, color: theme.node.muted }}>
+                    {capability.fixedSummary.map((item) => <span key={item}>{item}</span>)}
+                </div>
+                {capability.aspectRatio ? (
+                    <SettingGroup title={capability.model.startsWith("grok-") ? "尺寸" : "画幅比例"} color={theme.node.muted}>
+                        <div className="grid grid-cols-3 gap-2.5">
+                            {capability.aspectRatio.options.map((item) => {
+                                const preview = capabilityPreview(item.value);
+                                return (
+                                    <button key={item.value} type="button" className="flex min-h-[68px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80" style={{ borderColor: ratio === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }} onClick={() => onConfigChange("size", item.value)}>
+                                        <SizePreview width={preview.width} height={preview.height} color={theme.node.text} />
+                                        <span>{item.label}</span>
+                                        <span className="text-[10px] leading-none opacity-55">{item.detail || item.value}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </SettingGroup>
+                ) : null}
+                {!visualOnly && capability.duration?.mode === "select" ? (
+                    <SettingGroup title="时长" color={theme.node.muted}>
+                        <div className="grid grid-cols-3 gap-2.5">{capability.duration.options.map((item) => <OptionPill key={item.value} selected={duration === item.value} theme={theme} onClick={() => onConfigChange("videoSeconds", item.value)}>{item.label}</OptionPill>)}</div>
+                    </SettingGroup>
+                ) : null}
+                {!visualOnly && capability.duration?.mode === "range" ? (
+                    <SettingGroup title="时长" color={theme.node.muted}>
+                        <div className="grid grid-cols-4 gap-2.5">{(capability.duration.quick || []).map((value) => <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>{value}s</OptionPill>)}</div>
+                        <NumberInput value={String(duration)} min={capability.duration.min} max={capability.duration.max} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                    </SettingGroup>
+                ) : null}
+                {referenceSummary.length ? <div className="text-[11px] leading-5" style={{ color: theme.node.muted }}>{referenceSummary.join(" · ")}</div> : null}
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
+function capabilityPreview(value: string) {
+    const pixelMatch = value.match(/^(\d+)x(\d+)$/);
+    if (pixelMatch) return { width: Number(pixelMatch[1]), height: Number(pixelMatch[2]) };
+    return ratioPreview(value);
 }
 
 function KlingV26VideoSettingsPanel({ config, modelName, onConfigChange, theme, showTitle, className, hideNegativePrompt, visualOnly }: VideoSettingsPanelProps) {

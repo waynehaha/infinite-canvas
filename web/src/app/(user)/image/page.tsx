@@ -35,6 +35,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { getAIHubImageCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
 import {
     CreativeWorkflowWorkspace,
     type WorkflowExternalTaskFailure,
@@ -167,12 +168,19 @@ export default function ImagePage() {
     const effectiveConfigRef = useRef(effectiveConfig);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
+    const imageCapability = getAIHubImageCapability(model);
+    const imageReferenceLimit = imageCapability ? imageCapability.references?.images.max || 0 : 15;
     const canGenerate = Boolean(prompt.trim());
-    const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
+    const generationCount = Math.max(1, Math.min(imageCapability?.count?.max || 10, Number(config.count) || 1));
     const pendingCount = results.filter((item) => item.status === "pending").length;
     const pendingLogCount = logs.filter((log) => log.status === "生成中" && log.task && !log.images.length).length;
     const usesBackendImageTasks = (value: AiConfig) => value.channelMode === "remote" || (value.channelMode === "local" && Boolean(token));
     const imageTaskConfig = () => effectiveConfigRef.current;
+
+    useEffect(() => {
+        if (!imageCapability || references.length <= imageReferenceLimit) return;
+        setReferences((value) => value.slice(0, imageReferenceLimit));
+    }, [imageCapability, imageReferenceLimit, references.length]);
 
     const restorePendingLogResults = (sourceLogs: GenerationLog[]) => {
         const pendingLogs = sourceLogs.filter((log) => log.status === "生成中" && log.task && !log.images.length);
@@ -308,7 +316,7 @@ export default function ImagePage() {
     };
 
     const addReferences = async (files?: FileList | null) => {
-        const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
+        const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/")).slice(0, Math.max(0, imageReferenceLimit - references.length));
         if (!imageFiles.length) return;
         setUploadingCount(imageFiles.length);
         const hideLoading = message.loading("正在上传参考图...", 0);
@@ -319,7 +327,7 @@ export default function ImagePage() {
                     return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, source: "upload" as const, temporary: true };
                 }),
             );
-            setReferences((value) => [...value, ...nextReferences]);
+            setReferences((value) => [...value, ...nextReferences].slice(0, imageReferenceLimit));
             message.success("参考图上传成功");
         } catch (error) {
             message.error(error instanceof Error ? `上传参考图失败：${error.message}` : "上传参考图失败");
@@ -332,7 +340,7 @@ export default function ImagePage() {
     const addReferencesFromClipboard = async () => {
         try {
             const items = await navigator.clipboard.read();
-            const blobs = await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("image/")).map((type) => item.getType(type))));
+            const blobs = (await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("image/")).map((type) => item.getType(type))))).slice(0, Math.max(0, imageReferenceLimit - references.length));
             if (!blobs.length) {
                 message.error("剪切板里没有可读取的图片");
                 return;
@@ -346,7 +354,7 @@ export default function ImagePage() {
                         return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, source: "clipboard" as const, temporary: true };
                     }),
                 );
-                setReferences((value) => [...value, ...nextReferences]);
+                setReferences((value) => [...value, ...nextReferences].slice(0, imageReferenceLimit));
                 message.success(`已成功上传并读取 ${nextReferences.length} 张参考图`);
             } finally {
                 hideLoading();
@@ -637,6 +645,10 @@ export default function ImagePage() {
         if (payload.kind === "text") {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
+            if (!imageReferenceLimit || references.length >= imageReferenceLimit) {
+                message.warning(imageReferenceLimit ? `当前模型最多支持 ${imageReferenceLimit} 张参考图` : "当前模型不支持参考图");
+                return;
+            }
             const resolvedUrl = await resolveImageUrl(payload.storageKey, payload.dataUrl);
             const safeUrl = resolvedUrl || "";
             const reference =
@@ -657,10 +669,10 @@ export default function ImagePage() {
                     message.error("引入素材失败：图片数据为空");
                     return;
                 }
-                setReferences((value) => [...value, reference]);
+                setReferences((value) => [...value, reference].slice(0, imageReferenceLimit));
             } else {
                 const stored = await uploadImage(payload.dataUrl);
-                setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, source: payload.source === "library" ? "library" : "upload", temporary: payload.source !== "library" }]);
+                setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, source: payload.source === "library" ? "library" : "upload", temporary: payload.source !== "library" }].slice(0, imageReferenceLimit));
             }
         } else {
             message.warning("视频素材不能作为生图参考图");
@@ -1309,6 +1321,8 @@ function WorkbenchPanel({
     uploadingCount: number;
 }) {
     const [bottomSettingsCollapsed, setBottomSettingsCollapsed] = useState(true);
+    const aiHubCapability = getAIHubImageCapability(model);
+    const referencesEnabled = !aiHubCapability || Boolean(aiHubCapability.references?.images.max);
 
     if (layout === "bottom") {
         return (
@@ -1359,7 +1373,7 @@ function WorkbenchPanel({
                                     fullWidth
                                 />
                             </label>
-                            <label className="grid gap-1 text-xs text-stone-500 dark:text-stone-400">
+                            {!aiHubCapability ? <label className="grid gap-1 text-xs text-stone-500 dark:text-stone-400">
                                 接口模式
                                 <div className="flex h-11 items-center rounded-xl border border-stone-200 bg-background px-2.5 dark:border-stone-800">
                                     <Segmented
@@ -1373,16 +1387,16 @@ function WorkbenchPanel({
                                         ]}
                                     />
                                 </div>
-                            </label>
-                            <QuickSelect label="尺寸" value={config.size || "auto"} options={quickSizeOptions} onChange={(value) => updateConfig("size", value)} />
-                            <QuickSelect label="质量" value={config.quality || "auto"} options={quickQualityOptions} onChange={(value) => updateConfig("quality", value)} />
-                            <QuickNumber label="数量" value={config.count || "1"} min={1} max={10} onChange={(value) => updateConfig("count", value)} />
-                            <ReferenceQuickActions references={references} onUploadReferences={onUploadReferences} />
+                            </label> : null}
+                            {aiHubCapability?.size ? <QuickSelect label="画幅" value={normalizeAIHubSelectValue(aiHubCapability.size, config.size)} options={[...aiHubCapability.size.options]} onChange={(value) => updateConfig("size", value)} /> : !aiHubCapability ? <QuickSelect label="尺寸" value={config.size || "auto"} options={quickSizeOptions} onChange={(value) => updateConfig("size", value)} /> : null}
+                            {aiHubCapability?.quality ? <QuickSelect label="质量" value={normalizeAIHubSelectValue(aiHubCapability.quality, config.quality)} options={[...aiHubCapability.quality.options]} onChange={(value) => updateConfig("quality", value)} /> : !aiHubCapability ? <QuickSelect label="质量" value={config.quality || "auto"} options={quickQualityOptions} onChange={(value) => updateConfig("quality", value)} /> : null}
+                            {aiHubCapability?.count && aiHubCapability.count.max > 1 ? <QuickNumber label="数量" value={String(normalizeAIHubRangeValue(aiHubCapability.count, config.count))} min={aiHubCapability.count.min} max={aiHubCapability.count.max} onChange={(value) => updateConfig("count", value)} /> : !aiHubCapability ? <QuickNumber label="数量" value={config.count || "1"} min={1} max={10} onChange={(value) => updateConfig("count", value)} /> : null}
+                            {referencesEnabled ? <ReferenceQuickActions references={references} onUploadReferences={onUploadReferences} /> : null}
                             <Button type="primary" className="h-11 min-w-28 rounded-xl hidden lg:inline-flex" icon={<Sparkles className="size-4" />} disabled={!canGenerate} onClick={onGenerate}>
                                 {pendingCount ? `${pendingCount} 生成中` : "开始创作"}
                             </Button>
                         </div>
-                        {references.length || uploadingCount > 0 ? <ReferenceStrip className="mt-3" references={references} compact onRemoveReference={onRemoveReference} uploadingCount={uploadingCount} /> : null}
+                        {referencesEnabled && (references.length || uploadingCount > 0) ? <ReferenceStrip className="mt-3" references={references} compact onRemoveReference={onRemoveReference} uploadingCount={uploadingCount} /> : null}
                     </div>
                 </div>
             </div>
@@ -1410,7 +1424,7 @@ function WorkbenchPanel({
                     </div>
                 </section>
 
-                <section className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
+                {referencesEnabled ? <section className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
                     <div className="flex items-center gap-2 px-3 py-2">
                         <span className="font-medium text-sm">参考图</span>
                         <Tag className="m-0 text-xs">{references.length}</Tag>
@@ -1423,7 +1437,7 @@ function WorkbenchPanel({
                         </div>
                         <ReferenceStrip references={references} onRemoveReference={onRemoveReference} uploadingCount={uploadingCount} />
                     </div>
-                </section>
+                </section> : null}
 
                 <div className="space-y-3">
                     <GenerationSettings config={config} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
@@ -1806,6 +1820,7 @@ function CategoryCard({
 
 function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const aiHubCapability = getAIHubImageCapability(model);
 
     return (
         <div className="space-y-3">
@@ -1815,7 +1830,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
                 </div>
                 <div className="border-t border-stone-200 p-3 dark:border-stone-800 space-y-2">
                     <ModelPicker config={config} value={model} capability="image" channelId={config.imageChannelId} onChange={(value, channelId) => { updateConfig("imageModel", value); if (channelId) updateConfig("imageChannelId", channelId); }} fullWidth onMissingConfig={() => openConfigDialog(false)} />
-                    <div className="flex items-center justify-between gap-3 pt-1">
+                    {!aiHubCapability ? <div className="flex items-center justify-between gap-3 pt-1">
                         <div className="text-xs opacity-75">接口模式</div>
                         <Segmented
                             size="small"
@@ -1827,10 +1842,10 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
                                 { value: "responses", label: "responses" },
                             ]}
                         />
-                    </div>
+                    </div> : null}
                 </div>
             </section>
-            <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-3" maxCount={10} />
+            <ImageSettingsPanel config={config} modelName={model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-3" maxCount={10} />
         </div>
     );
 }
@@ -2774,13 +2789,6 @@ function buildLog({
 function formatLogTime(value: number) {
     return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
-
-
-
-
-
-
-
 
 
 

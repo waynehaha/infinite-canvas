@@ -14,7 +14,7 @@ export const AIHUB_MODELS_BY_CAPABILITY: Record<AIHubModelCapability, string[]> 
         "gemini-3-flash",
         "gemini-2.0-flash-thinking",
     ],
-    image: ["gpt-image-2", "gpt-image-2-1k", "gpt-image-2-2k", "gpt-image-2-3.5k", "gemini-image", "gemini-image-pro", "gemini-3.1-flash-image-4k", "nano-banana-pro-4K"],
+    image: ["gpt-image-2", "gpt-image-2-1k", "gpt-image-2-2k", "gpt-image-2-3.5k", "gemini-image", "gemini-image-pro", "gemini-3.1-flash-image-4k"],
     video: [
         "omni-fast",
         "omni-fast-no-water",
@@ -26,8 +26,6 @@ export const AIHUB_MODELS_BY_CAPABILITY: Record<AIHubModelCapability, string[]> 
         "Seedance-2.0-mini-720p",
         "Seedance-2.0-fast-720p",
         "Seedance-2.0-720p",
-        "Seedance-2.0-1080p",
-        "Seedance-2.0-4k",
         "veo-clean",
     ],
     audio: ["gemini-music"],

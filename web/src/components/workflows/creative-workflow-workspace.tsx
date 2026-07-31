@@ -8,6 +8,7 @@ import { saveAs } from "file-saver";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
+import { getAIHubImageCapability } from "@/lib/aihub-model-capabilities";
 import { ModelPicker } from "@/components/model-picker";
 import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
@@ -1592,7 +1593,7 @@ function WorkflowEditorModal({
                             <ToggleRow label="先审核提示词" checked={workflow.seriesConfig.reviewRequired !== false} onChange={(checked) => patchSeriesConfig({ reviewRequired: checked })} />
                         </div>
                     ) : null}
-                    <Select
+                    {!getAIHubImageCapability(workflow.config.imageModel || workflow.config.model || defaultConfig.imageModel) ? <Select
                         className="w-full"
                         value={workflow.config.apiMode}
                         options={[
@@ -1600,9 +1601,10 @@ function WorkflowEditorModal({
                             { value: "responses", label: "Responses API" },
                         ]}
                         onChange={(value) => patchConfig({ apiMode: value })}
-                    />
+                    /> : null}
                     <ImageSettingsPanel
                         config={{ ...defaultConfig, ...workflow.config, model: workflow.config.model || defaultConfig.model, imageModel: workflow.config.imageModel || workflow.config.model || defaultConfig.imageModel }}
+                        modelName={workflow.config.imageModel || workflow.config.model || defaultConfig.imageModel}
                         onConfigChange={(key, value) => patchConfig({ [key]: value } as Partial<WorkflowGenerationConfig>)}
                         theme={theme}
                         showTitle={false}
@@ -2123,7 +2125,6 @@ function referenceUsedByWorkflowTask(reference: ReferenceImage, tasks: WorkflowT
 function formatDate(value: number) {
     return new Date(value).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
-
 
 
 

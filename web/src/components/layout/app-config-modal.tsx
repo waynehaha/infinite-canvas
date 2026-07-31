@@ -4,7 +4,7 @@ import { App, Button, Form, Input, Modal, Segmented, Select, Switch } from "antd
 import { useEffect, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
-import { fetchImageModels } from "@/services/api/image";
+import { fetchImageModels, ModelListRequestError } from "@/services/api/image";
 import { fetchUserConfig, measureUserStorageProvider, syncUserModelConfig, syncUserStorageProvider } from "@/services/api/user-config";
 import { clearStorageConfigCache as clearFileStorageCache } from "@/services/file-storage";
 import { clearStorageConfigCache as clearImageStorageCache, defaultUserStorageProvider, loadStorageConfig, saveUserStorageProvider, USER_STORAGE_PROVIDER_KEY, type UserStorageProvider } from "@/services/image-storage";
@@ -21,6 +21,11 @@ type ModelGroup = {
     optionsLabel: string;
 };
 
+type ChannelConnectionFeedback = {
+    tone: "success" | "warning" | "error";
+    text: string;
+};
+
 const modelGroups: ModelGroup[] = [
     { capability: "image", modelKey: "imageModel", channelKey: "imageChannelId", modelsKey: "imageModels", defaultLabel: "默认生图模型", optionsLabel: "生图模型可选项" },
     { capability: "video", modelKey: "videoModel", channelKey: "videoChannelId", modelsKey: "videoModels", defaultLabel: "默认视频模型", optionsLabel: "视频模型可选项" },
@@ -31,6 +36,8 @@ const modelGroups: ModelGroup[] = [
 export function AppConfigModal() {
     const { message } = App.useApp();
     const [loadingModels, setLoadingModels] = useState(false);
+    const [testingChannelId, setTestingChannelId] = useState("");
+    const [channelConnectionFeedback, setChannelConnectionFeedback] = useState<Record<string, ChannelConnectionFeedback>>({});
     const [savingConfig, setSavingConfig] = useState(false);
     const [remoteStorageSyncEnabled, setRemoteStorageSyncEnabled] = useState(false);
     const [allowUserStorageProvider, setAllowUserStorageProvider] = useState(false);
@@ -163,7 +170,7 @@ export function AppConfigModal() {
         try {
             const nextChannels = await Promise.all(channels.map(async (channel) => ({ ...channel, models: await fetchImageModels(configForLocalChannel(config, channel)) })));
             updateLocalChannels(nextChannels);
-            message.success("模型列表已更新");
+            message.success("全部渠道模型已更新");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "读取模型失败");
         } finally {
@@ -201,6 +208,13 @@ export function AppConfigModal() {
     };
 
     const patchLocalChannel = (id: string, patch: Partial<LocalModelChannel>) => {
+        if ("baseUrl" in patch || "apiKey" in patch) {
+            setChannelConnectionFeedback((current) => {
+                const next = { ...current };
+                delete next[id];
+                return next;
+            });
+        }
         updateLocalChannels(normalizeLocalChannels(config).map((channel) => (channel.id === id ? { ...channel, ...patch } : channel)));
     };
 
@@ -212,19 +226,29 @@ export function AppConfigModal() {
         updateLocalChannels(normalizeLocalChannels(config).filter((channel) => channel.id !== id));
     };
 
-    const refreshLocalChannelModels = async (channel: LocalModelChannel) => {
+    const testLocalChannel = async (channel: LocalModelChannel) => {
         if (!channel.baseUrl.trim() || !channel.apiKey.trim()) {
-            message.error("请先填写该渠道的 Base URL 和 API Key");
+            const text = "请先填写 Base URL 和 API Key";
+            setChannelConnectionFeedback((current) => ({ ...current, [channel.id]: { tone: "error", text } }));
+            message.error(text);
             return;
         }
-        setLoadingModels(true);
+        setTestingChannelId(channel.id);
         try {
-            patchLocalChannel(channel.id, { models: await fetchImageModels(configForLocalChannel(config, channel)) });
-            message.success("模型列表已更新");
+            const models = await fetchImageModels(configForLocalChannel(config, channel));
+            patchLocalChannel(channel.id, { models });
+            const feedback: ChannelConnectionFeedback = models.length
+                ? { tone: "success", text: `连接成功 · Key 可用 · 已同步 ${models.length} 个模型` }
+                : { tone: "warning", text: "连接成功，但当前 Key 没有返回可用模型" };
+            setChannelConnectionFeedback((current) => ({ ...current, [channel.id]: feedback }));
+            if (models.length) message.success(`连接成功，已同步 ${models.length} 个模型`);
+            else message.warning(feedback.text);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "读取模型失败");
+            const text = modelConnectionErrorText(error);
+            setChannelConnectionFeedback((current) => ({ ...current, [channel.id]: { tone: "error", text } }));
+            message.error(text);
         } finally {
-            setLoadingModels(false);
+            setTestingChannelId("");
         }
     };
 
@@ -305,15 +329,15 @@ export function AppConfigModal() {
                                             <Input value={channel.baseUrl} placeholder="Base URL" onChange={(event) => patchLocalChannel(channel.id, { baseUrl: event.target.value })} />
                                             <Input.Password value={channel.apiKey} placeholder="API Key" onChange={(event) => patchLocalChannel(channel.id, { apiKey: event.target.value })} />
                                             <div className="flex gap-2">
-                                                <Button size="small" loading={loadingModels} onClick={() => void refreshLocalChannelModels(channel)}>
-                                                    拉取
+                                                <Button size="small" loading={testingChannelId === channel.id} disabled={loadingModels || Boolean(testingChannelId && testingChannelId !== channel.id)} onClick={() => void testLocalChannel(channel)}>
+                                                    测试连接
                                                 </Button>
                                                 <Button size="small" danger disabled={index === 0 && normalizeLocalChannels(config).length === 1} onClick={() => removeLocalChannel(channel.id)}>
                                                     删除
                                                 </Button>
                                             </div>
                                         </div>
-                                        <div className="text-xs text-stone-500">已保存 {channel.models.length} 个模型</div>
+                                        <ChannelConnectionStatus channel={channel} feedback={channelConnectionFeedback[channel.id]} />
                                     </div>
                                 ))}
                             </div>
@@ -325,8 +349,8 @@ export function AppConfigModal() {
                                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                                     <span className="text-xs text-stone-500">自动同步</span>
                                     <Switch size="small" checked={config.syncModelConfig} onChange={(checked) => updateConfig("syncModelConfig", checked)} />
-                                    <Button size="small" loading={loadingModels} onClick={() => void refreshModels()}>
-                                        拉取全部渠道
+                                    <Button size="small" loading={loadingModels} disabled={Boolean(testingChannelId)} onClick={() => void refreshModels()}>
+                                        更新全部模型
                                     </Button>
                                 </div>
                             </div>
@@ -432,6 +456,24 @@ function FeatureSwitch({ title, description, checked, onChange }: { title: strin
             <div className="mt-1 text-xs leading-5 text-stone-500">{description}</div>
         </div>
     );
+}
+
+function ChannelConnectionStatus({ channel, feedback }: { channel: LocalModelChannel; feedback?: ChannelConnectionFeedback }) {
+    const text = feedback?.text || (channel.id === "aihub" ? `已预置 ${channel.models.length} 个模型，填好 Key 后可直接使用` : `已保存 ${channel.models.length} 个模型`);
+    const toneClass = feedback?.tone === "success" ? "text-green-600 dark:text-green-400" : feedback?.tone === "warning" ? "text-amber-600 dark:text-amber-400" : feedback?.tone === "error" ? "text-red-600 dark:text-red-400" : "text-stone-500";
+    return <div className={`text-xs ${toneClass}`}>{text}</div>;
+}
+
+function modelConnectionErrorText(error: unknown) {
+    if (error instanceof ModelListRequestError) {
+        if (error.status === 401) return "Key 无效或已过期，请重新检查";
+        if (error.status === 403) return "当前 Key 无权限，请检查分组或模型权限";
+        if (error.status === 404) return "没有找到模型接口，请检查 Base URL";
+        if (error.status === 0) return "无法连接，请检查 Base URL、网络或代理设置";
+        if (error.status >= 500) return "渠道服务暂时不可用，请稍后重试";
+        return `连接失败：${error.message}`;
+    }
+    return error instanceof Error ? `连接失败：${error.message}` : "连接失败，请稍后重试";
 }
 
 function configForLocalChannel(config: AiConfig, channel: LocalModelChannel): AiConfig {
