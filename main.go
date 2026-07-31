@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net"
 
 	"github.com/tigerowo/infinite-canvas/config"
 	"github.com/tigerowo/infinite-canvas/handler"
@@ -19,5 +20,9 @@ func main() {
 	service.StartPromptSyncScheduler()
 	service.StartCanvasProjectCleanupScheduler()
 	handler.StartVideoTaskPoller()
-	log.Fatal(router.New().Run(":" + config.Cfg.Port))
+	address := ":" + config.Cfg.Port
+	if config.Cfg.ListenAddress != "" {
+		address = net.JoinHostPort(config.Cfg.ListenAddress, config.Cfg.Port)
+	}
+	log.Fatal(router.New().Run(address))
 }

@@ -13,6 +13,7 @@ import (
 
 type Config struct {
 	Port                string `env:"PORT" envDefault:"8080"`
+	ListenAddress       string `env:"LISTEN_ADDRESS"`
 	AdminUsername       string `env:"ADMIN_USERNAME" envDefault:"admin"`
 	AdminPassword       string `env:"ADMIN_PASSWORD" envDefault:"infinite-canvas"`
 	JWTSecret           string `env:"JWT_SECRET" envDefault:"infinite-canvas"`

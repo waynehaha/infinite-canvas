@@ -9,4 +9,5 @@ description: 当前项目后续值得处理的事项
 
 ## 桌面交付
 
-- 根据双击启动 MVP 的用户反馈，评估并实施 Windows/macOS 免 Docker 安装包。
+- 补充 Windows 代码签名、Apple Developer ID 签名和公证，减少新手首次安装的系统安全提示。
+- 根据用户需求评估 Windows ARM64 和 macOS Intel 安装包。

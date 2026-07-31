@@ -2,6 +2,9 @@
 
 ## Unreleased
 
++ [新增] Windows x64 与 macOS Apple Silicon 免 Docker 原生安装包构建流程
++ [新增] 原生启动器自动管理端口、前后端进程、日志和用户数据
+
 ## v0.1.0 - 2026-07-31
 
 + [新增] 将画布助手删除改为完整适配现有画布的 Agent

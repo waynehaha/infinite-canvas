@@ -52,7 +52,17 @@ APIMart 点此链接 [https://apimart.ai/register?aff=fWMrEv](https://apimart.ai
 
 ## 快速开始
 
-### 双击启动（推荐新手）
+### 原生安装包（推荐新手）
+
+前往 [GitHub Releases](https://github.com/waynehaha/infinite-canvas/releases) 下载 Windows x64 或 macOS Apple Silicon 安装包。安装包已内置完整运行环境，不需要 Docker Desktop、Node.js、Go 或 Bun。
+
+- Windows：安装 `.exe` 后双击桌面的“AI创作工作台”。
+- macOS：打开 `.dmg`，将启动和停止应用拖入 Applications。
+- 数据保存在系统用户目录，升级和普通卸载不会自动删除。
+
+详细说明见 [免 Docker 原生安装包](docs/overview/20260731-native-installers.md)。
+
+### Docker 双击启动（备用）
 
 项目提供 Windows 和 macOS 双击入口。首次使用会检查 Docker Desktop；未安装时会提供自动安装或下载引导。
 
