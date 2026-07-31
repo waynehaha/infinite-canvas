@@ -46,11 +46,29 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		recordLauncherError(options, err)
 		if !options.noDialog {
 			showMessage(appName, err.Error(), true)
 		}
 		os.Exit(1)
 	}
+}
+
+func recordLauncherError(options launcherOptions, runErr error) {
+	dataDir, err := resolveDataDir(options.dataDir)
+	if err != nil {
+		return
+	}
+	logDir := filepath.Join(dataDir, "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return
+	}
+	file, err := os.OpenFile(filepath.Join(logDir, "launcher.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	fmt.Fprintf(file, "%s %s\n", time.Now().Format(time.RFC3339), runErr)
 }
 
 func parseOptions() (launcherOptions, error) {

@@ -53,7 +53,10 @@ jobs:
           $bundle = (Resolve-Path dist/native/windows-bundle).Path
           $data = Join-Path $env:RUNNER_TEMP "ai-workbench-native-data"
           & "$bundle/launcher.exe" --action start --app-dir "$bundle" --data-dir "$data" --no-browser --no-dialog --wait-timeout 180
-          if ($LASTEXITCODE -ne 0) { throw "First startup failed" }
+          if ($LASTEXITCODE -ne 0) {
+            Get-ChildItem "$data/logs" -File -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "=== $($_.Name) ==="; Get-Content $_.FullName }
+            throw "First startup failed"
+          }
           $first = Get-Content "$data/run/state.json" -Raw | ConvertFrom-Json
           Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$($first.webPort)/" -TimeoutSec 10 | Out-Null
           Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$($first.apiPort)/api/health" -TimeoutSec 10 | Out-Null
@@ -91,7 +94,10 @@ jobs:
           if ($process.ExitCode -ne 0 -or -not (Test-Path "$install/launcher.exe")) { throw "Silent installation failed" }
           $data = Join-Path $env:RUNNER_TEMP "ai-workbench-installed-data"
           & "$install/launcher.exe" --action start --data-dir "$data" --no-browser --no-dialog --wait-timeout 180
-          if ($LASTEXITCODE -ne 0) { throw "Installed application failed to start" }
+          if ($LASTEXITCODE -ne 0) {
+            Get-ChildItem "$data/logs" -File -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "=== $($_.Name) ==="; Get-Content $_.FullName }
+            throw "Installed application failed to start"
+          }
           $state = Get-Content "$data/run/state.json" -Raw | ConvertFrom-Json
           Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$($state.webPort)/" -TimeoutSec 10 | Out-Null
           & "$install/launcher.exe" --action stop --data-dir "$data" --no-dialog
