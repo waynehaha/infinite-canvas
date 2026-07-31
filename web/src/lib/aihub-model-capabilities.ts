@@ -85,11 +85,20 @@ const qualityOptions = [
     { value: "low", label: "低" },
 ] as const;
 
-const gptImageSizeOptions = [
+const gptImageLegacySizeOptions = [
     { value: "auto", label: "自动", detail: "模型决定" },
     { value: "1024x1024", label: "方形", detail: "1:1" },
     { value: "1536x1024", label: "横屏", detail: "3:2" },
     { value: "1024x1536", label: "竖屏", detail: "2:3" },
+] as const;
+
+const gptImage2SizeOptions = [
+    ...gptImageLegacySizeOptions,
+    { value: "1360x1024", label: "标准横屏", detail: "4:3" },
+    { value: "1024x1360", label: "标准竖屏", detail: "3:4" },
+    { value: "1824x1024", label: "宽屏", detail: "16:9" },
+    { value: "1024x1824", label: "长竖屏", detail: "9:16" },
+    { value: "1568x672", label: "宽银幕", detail: "21:9" },
 ] as const;
 
 const highResolutionRatios = [
@@ -135,14 +144,14 @@ const imageCapabilities: readonly AIHubImageCapability[] = [
     {
         kind: "image",
         model: "gpt-image-2",
-        status: "documented",
+        status: "verified",
         verifiedAt,
         source,
         endpoint: "/images/generations · /images/edits",
         fixedSummary: ["尺寸表示画幅，实际像素由模型分配"],
         hidden: ["自定义宽高", "2K/4K 快捷尺寸"],
         quality: { mode: "select", default: "auto", options: qualityOptions },
-        size: { mode: "select", default: "auto", options: gptImageSizeOptions },
+        size: { mode: "select", default: "auto", options: gptImage2SizeOptions },
         count: imageCountFour,
         references: { images: { max: 1, note: "图生图使用 /images/edits" } },
     },
@@ -155,7 +164,7 @@ const imageCapabilities: readonly AIHubImageCapability[] = [
         endpoint: "/images/generations",
         fixedSummary: ["固定约 1K", "单次生成 1 张"],
         hidden: ["质量", "自定义宽高", "生成张数"],
-        size: { mode: "select", default: "1024x1024", options: gptImageSizeOptions.slice(1) },
+        size: { mode: "select", default: "1024x1024", options: gptImageLegacySizeOptions.slice(1) },
         count: singleImage,
         references: { images: { max: 6, maxTotalBytes: 5 * 1024 * 1024, note: "所有参考图合计不超过 5MB" } },
     },

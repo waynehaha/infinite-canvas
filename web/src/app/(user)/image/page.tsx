@@ -1388,7 +1388,7 @@ function WorkbenchPanel({
                                     />
                                 </div>
                             </label> : null}
-                            {aiHubCapability?.size ? <QuickSelect label="画幅" value={normalizeAIHubSelectValue(aiHubCapability.size, config.size)} options={[...aiHubCapability.size.options]} onChange={(value) => updateConfig("size", value)} /> : !aiHubCapability ? <QuickSelect label="尺寸" value={config.size || "auto"} options={quickSizeOptions} onChange={(value) => updateConfig("size", value)} /> : null}
+                            {aiHubCapability?.size ? <QuickSelect label="尺寸" value={normalizeAIHubSelectValue(aiHubCapability.size, config.size)} options={aiHubCapability.size.options.map((item) => ({ ...item, label: item.value === "auto" ? "auto" : item.detail || item.value }))} onChange={(value) => updateConfig("size", value)} /> : !aiHubCapability ? <QuickSelect label="尺寸" value={config.size || "auto"} options={quickSizeOptions} onChange={(value) => updateConfig("size", value)} /> : null}
                             {aiHubCapability?.quality ? <QuickSelect label="质量" value={normalizeAIHubSelectValue(aiHubCapability.quality, config.quality)} options={[...aiHubCapability.quality.options]} onChange={(value) => updateConfig("quality", value)} /> : !aiHubCapability ? <QuickSelect label="质量" value={config.quality || "auto"} options={quickQualityOptions} onChange={(value) => updateConfig("quality", value)} /> : null}
                             {aiHubCapability?.count && aiHubCapability.count.max > 1 ? <QuickNumber label="数量" value={String(normalizeAIHubRangeValue(aiHubCapability.count, config.count))} min={aiHubCapability.count.min} max={aiHubCapability.count.max} onChange={(value) => updateConfig("count", value)} /> : !aiHubCapability ? <QuickNumber label="数量" value={config.count || "1"} min={1} max={10} onChange={(value) => updateConfig("count", value)} /> : null}
                             {referencesEnabled ? <ReferenceQuickActions references={references} onUploadReferences={onUploadReferences} /> : null}
@@ -2789,7 +2789,6 @@ function buildLog({
 function formatLogTime(value: number) {
     return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
-
 
 
 

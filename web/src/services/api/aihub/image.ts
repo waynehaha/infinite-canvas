@@ -76,7 +76,8 @@ function formatMB(bytes: number) {
 }
 
 function normalizeAIHubImageSize(model: string, size: string) {
-    if (!model.toLowerCase().startsWith("gpt-image-2")) return size;
+    const normalizedModel = model.toLowerCase();
+    if (normalizedModel === "gpt-image-2" || !normalizedModel.startsWith("gpt-image-2")) return size;
     const match = size.match(/^(\d+)x(\d+)$/);
     if (!match) return size;
     const ratio = Number(match[1]) / Number(match[2]);

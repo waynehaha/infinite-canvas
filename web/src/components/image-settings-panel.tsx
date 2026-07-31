@@ -174,7 +174,6 @@ function AIHubImageSettingsPanel({ capability, config, onConfigChange, theme, sh
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">图像设置</div> : null}
-                <CapabilitySummary items={capability.fixedSummary} theme={theme} />
                 {capability.quality ? (
                     <div className="space-y-2.5">
                         <SettingTitle color={theme.node.muted}>质量</SettingTitle>
@@ -185,8 +184,8 @@ function AIHubImageSettingsPanel({ capability, config, onConfigChange, theme, sh
                 ) : null}
                 {showSize && capability.size ? (
                     <div className="space-y-2.5">
-                        <SettingTitle color={theme.node.muted}>画幅</SettingTitle>
-                        <div className="grid grid-cols-3 gap-2.5">
+                        <SettingTitle color={theme.node.muted}>宽高比</SettingTitle>
+                        <div className="grid grid-cols-4 gap-2.5">
                             {capability.size.options.map((item) => <CapabilityOption key={item.value} option={item} selected={size === item.value} theme={theme} onClick={() => onConfigChange("size", item.value)} />)}
                         </div>
                     </div>
@@ -199,24 +198,25 @@ function AIHubImageSettingsPanel({ capability, config, onConfigChange, theme, sh
                         </div>
                     </div>
                 ) : null}
+                <CapabilityNotes items={capability.fixedSummary} theme={theme} />
                 {capability.references?.images ? <div className="text-[11px] leading-5" style={{ color: theme.node.muted }}>参考图最多 {capability.references.images.max} 张{capability.references.images.note ? `，${capability.references.images.note}` : ""}</div> : null}
             </div>
         </ImageSettingsTheme>
     );
 }
 
-function CapabilitySummary({ items, theme }: { items: readonly string[]; theme: CanvasTheme }) {
+function CapabilityNotes({ items, theme }: { items: readonly string[]; theme: CanvasTheme }) {
     if (!items.length) return null;
-    return <div className="flex flex-wrap gap-x-3 gap-y-1 rounded-xl border px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, background: theme.node.fill, color: theme.node.muted }}>{items.map((item) => <span key={item}>{item}</span>)}</div>;
+    return <div className="flex flex-wrap gap-x-2 text-[11px] leading-5" style={{ color: theme.node.muted }}>{items.map((item) => <span key={item}>{item}</span>)}</div>;
 }
 
 function CapabilityOption({ option, selected, theme, onClick }: { option: AIHubOption; selected: boolean; theme: CanvasTheme; onClick: () => void }) {
     const dimensions = capabilityOptionDimensions(option.value);
+    const label = option.value === "auto" ? "auto" : option.detail || option.value;
     return (
-        <button type="button" className="flex min-h-16 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80" style={{ borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }} onClick={onClick}>
+        <button type="button" className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80" style={{ borderColor: selected ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
             <AspectIcon type={option.value === "auto" ? "auto" : "ratio"} width={dimensions.width} height={dimensions.height} color={theme.node.text} />
-            <span>{option.label}</span>
-            {option.detail ? <span className="text-[10px] leading-none opacity-55">{option.detail}</span> : null}
+            <span>{label}</span>
         </button>
     );
 }

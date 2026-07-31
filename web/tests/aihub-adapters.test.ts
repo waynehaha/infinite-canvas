@@ -12,7 +12,7 @@ registerHooks({
     },
 });
 
-const { createAIHubImageGenerationBody } = await import("../src/services/api/aihub/image.ts");
+const { createAIHubImageEditForm, createAIHubImageGenerationBody } = await import("../src/services/api/aihub/image.ts");
 const { aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } = await import("../src/services/api/aihub/video.ts");
 
 test("AIHub 默认模型完整且不重复", () => {
@@ -40,10 +40,15 @@ test("音乐响应支持字段和 Markdown 地址", () => {
 
 test("AIHub 图片字段和 GPT 图片限制正确", () => {
     const gemini = createAIHubImageGenerationBody({ model: "gemini-image", prompt: "融合", references: ["a", "b"] });
-    const gpt = createAIHubImageGenerationBody({ model: "gpt-image-2", prompt: "生成", n: 10, size: "2048x1024" });
+    const gpt = createAIHubImageGenerationBody({ model: "gpt-image-2", prompt: "生成", n: 10, size: "1824x1024" });
     assert.deepEqual(gemini.image, ["a", "b"]);
     assert.equal(gpt.n, 4);
-    assert.equal(gpt.size, "1536x1024");
+    assert.equal(gpt.size, "1824x1024");
+    for (const size of ["1360x1024", "1024x1360", "1824x1024", "1024x1824", "1568x672"]) {
+        assert.equal(createAIHubImageGenerationBody({ model: "gpt-image-2", prompt: "生成", size }).size, size);
+    }
+    assert.equal(createAIHubImageEditForm({ model: "gpt-image-2", prompt: "编辑", size: "1568x672" }, []).get("size"), "1568x672");
+    assert.equal(createAIHubImageGenerationBody({ model: "gpt-image-2-1k", prompt: "生成", size: "1824x1024" }).size, "1536x1024");
 });
 
 test("Omni 单图字段和相对任务地址正确", () => {
