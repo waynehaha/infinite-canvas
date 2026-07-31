@@ -1,4 +1,5 @@
 .next/
+web/next-env.d.ts
 out/
 node_modules/
 .env*
