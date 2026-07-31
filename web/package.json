@@ -7,6 +7,7 @@
         "dev": "next dev --webpack -H 0.0.0.0 -p 3000",
         "build": "next build",
         "start": "next start",
+        "test": "node --test tests/*.test.ts",
         "capabilities:sync": "node scripts/sync-aihub-model-capabilities.mjs --write",
         "capabilities:check": "node scripts/sync-aihub-model-capabilities.mjs",
         "format": "prettier --write .",

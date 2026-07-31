@@ -2,6 +2,7 @@ import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } from "@/services/api/aihub/video";
+import { classifyVideoPollingFailure, selectVideoPollId } from "@/services/api/video-polling";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { isKIEGrokVideoModel } from "@/components/video-settings-panel";
 import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
@@ -53,11 +54,13 @@ export const VIDEO_POLL_INTERVAL_MS = 5000;
 
 export class VideoRequestError extends Error {
     detail?: string;
+    retryable: boolean;
 
-    constructor(message: string, detail?: unknown) {
+    constructor(message: string, detail?: unknown, options: { retryable?: boolean } = {}) {
         super(message);
         this.name = "VideoRequestError";
         this.detail = formatErrorDetail(detail);
+        this.retryable = options.retryable ?? false;
     }
 }
 
@@ -134,7 +137,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers })).data);
         if (!created.id && !created.video_id) throw new Error("视频接口没有返回任务 ID");
         if (typeof created.progress === "number") onProgress?.(created.progress, created);
-        return { task: created, pollId: videoPollId(model, created), startedAt, requestBody: body };
+        return { task: created, pollId: videoPollId(config, model, created), startedAt, requestBody: body };
     } catch (error) {
         const { message, detail } = readAxiosError(error, "视频生成失败");
         void writeVideoAICallLog(config, model, "/videos", "POST", startedAt, axios.isAxiosError(error) ? error.response?.status || 0 : 0, stringifyLogPayload(summarizeVideoRequestBody(body)), stringifyLogPayload(detail), message);
@@ -152,7 +155,7 @@ export async function pollCreatedVideoGenerationTask(
     { startedAt = Date.now(), requestBody, initialDelayMs = 0, onProgress, onPoll }: { startedAt?: number; requestBody?: unknown; initialDelayMs?: number; onProgress?: VideoProgressHandler; onPoll?: (task: VideoResponse) => void } = {},
 ) {
     const model = config.model || config.videoModel;
-    const pollId = videoPollId(model, task);
+    const pollId = videoPollId(config, model, task);
     if (!pollId) throw new VideoRequestError("视频接口没有返回任务 ID", task);
     let completed: VideoResponse | null = null;
     try {
@@ -176,7 +179,7 @@ export async function pollCreatedVideoGenerationTask(
         refreshRemoteUser(config);
         return result;
     } catch (error) {
-        const { message, detail } = readAxiosError(error, "视频生成失败");
+        const pollingError = toVideoPollingError(error);
         void writeVideoAICallLog(
             config,
             model,
@@ -185,19 +188,23 @@ export async function pollCreatedVideoGenerationTask(
             startedAt,
             axios.isAxiosError(error) ? error.response?.status || 0 : 0,
             stringifyLogPayload(requestBody ? summarizeVideoRequestBody(requestBody) : { taskId: pollId }),
-            stringifyLogPayload(detail),
-            message,
+            stringifyLogPayload(pollingError.detail),
+            pollingError.message,
         );
-        throw new VideoRequestError(message, detail);
+        throw pollingError;
     }
 }
 
 export async function pollVideoGenerationTaskStatus(config: AiConfig, task: VideoResponse) {
     const model = config.model || config.videoModel;
-    const pollId = videoPollId(model, task);
+    const pollId = videoPollId(config, model, task);
     if (!pollId) throw new VideoRequestError("视频接口没有返回任务 ID", task);
-    const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data);
-    return isCompletedVideoStatus(video.status) || video.video_url || video.url ? materializeAIHubVideoTask(config, video, pollId) : video;
+    try {
+        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data);
+        return isCompletedVideoStatus(video.status) || video.video_url || video.url ? materializeAIHubVideoTask(config, video, pollId) : video;
+    } catch (error) {
+        throw toVideoPollingError(error);
+    }
 }
 
 async function materializeAIHubVideoTask(config: AiConfig, task: VideoResponse, pollId: string) {
@@ -208,7 +215,7 @@ async function materializeAIHubVideoTask(config: AiConfig, task: VideoResponse, 
         ? resolveAIHubTaskResultUrl(rawUrl, (path) => aiApiUrl(config, path), pollId)
         : aiHubTaskContentProxyUrl(pollId);
     const response = await fetch(downloadUrl, { headers: aiHeaders(config) });
-    if (!response.ok) throw new VideoRequestError(`视频结果下载失败：${response.status}`, { task, downloadPath: `/videos/${pollId}/content` });
+    if (!response.ok) throw new VideoRequestError(`视频结果下载失败：${response.status}`, { task, downloadPath: `/videos/${pollId}/content` }, { retryable: response.status === 408 || response.status === 429 || response.status >= 500 });
     const blob = await response.blob();
     if (!blob.size || (!blob.type.startsWith("video/") && !blob.type.startsWith("image/"))) throw new VideoRequestError("视频结果接口没有返回媒体文件", { task, contentType: blob.type, bytes: blob.size });
     const stored = await uploadMediaFile(blob, blob.type.startsWith("image/") ? "image" : "video");
@@ -534,8 +541,8 @@ function isAgnesVideoModel(model: string) {
     return model.toLowerCase().includes("agnes-video");
 }
 
-function videoPollId(model: string, task: VideoResponse) {
-    return isAgnesVideoModel(model) ? task.video_id || task.id : task.id || task.task_id || task.video_id || "";
+function videoPollId(config: AiConfig, model: string, task: VideoResponse) {
+    return selectVideoPollId(model, isAIHubConfig({ ...config, model, videoModel: model }), task);
 }
 
 function normalizeVideoSeconds(value: string) {
@@ -602,11 +609,20 @@ function isVideoEnvelope(payload: ApiVideoResponse): payload is ApiVideoEnvelope
 
 function readAxiosError(error: unknown, fallback: string) {
     if (error instanceof VideoRequestError) return { message: error.message, detail: error.detail || error.stack || error.message };
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
+    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; message?: string; code?: number | string }>(error)) {
         const responseData = error.response?.data;
-        return { message: responseData?.msg || responseData?.error?.message || (error.response?.status ? `${fallback}：${error.response.status}` : fallback), detail: responseData || error.message };
+        return { message: responseData?.msg || responseData?.message || responseData?.error?.message || (error.response?.status ? `${fallback}：${error.response.status}` : fallback), detail: responseData || error.message };
     }
     return { message: error instanceof Error ? error.message : fallback, detail: error instanceof Error ? error.stack || error.message : error };
+}
+
+function toVideoPollingError(error: unknown) {
+    if (error instanceof VideoRequestError) return error;
+    const status = axios.isAxiosError(error) ? error.response?.status || 0 : 0;
+    const responseCode = axios.isAxiosError<{ code?: string }>(error) ? error.response?.data?.code : undefined;
+    const { message, detail } = readAxiosError(error, "视频状态查询失败");
+    const failure = classifyVideoPollingFailure(status, responseCode, message);
+    return new VideoRequestError(failure.message, detail, { retryable: failure.retryable });
 }
 
 async function writeVideoAICallLog(config: AiConfig, model: string, endpoint: string, method: "GET" | "POST", startedAt: number, status: number, requestBody: string, responseBody: string, error: string) {
