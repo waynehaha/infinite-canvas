@@ -137,7 +137,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers })).data);
         if (!created.id && !created.video_id) throw new Error("视频接口没有返回任务 ID");
         if (typeof created.progress === "number") onProgress?.(created.progress, created);
-        return { task: created, pollId: videoPollId(config, model, created), startedAt, requestBody: body };
+        return { task: created, pollId: videoPollId(model, created), startedAt, requestBody: body };
     } catch (error) {
         const { message, detail } = readAxiosError(error, "视频生成失败");
         void writeVideoAICallLog(config, model, "/videos", "POST", startedAt, axios.isAxiosError(error) ? error.response?.status || 0 : 0, stringifyLogPayload(summarizeVideoRequestBody(body)), stringifyLogPayload(detail), message);
@@ -155,7 +155,7 @@ export async function pollCreatedVideoGenerationTask(
     { startedAt = Date.now(), requestBody, initialDelayMs = 0, onProgress, onPoll }: { startedAt?: number; requestBody?: unknown; initialDelayMs?: number; onProgress?: VideoProgressHandler; onPoll?: (task: VideoResponse) => void } = {},
 ) {
     const model = config.model || config.videoModel;
-    const pollId = videoPollId(config, model, task);
+    const pollId = videoPollId(model, task);
     if (!pollId) throw new VideoRequestError("视频接口没有返回任务 ID", task);
     let completed: VideoResponse | null = null;
     try {
@@ -197,7 +197,7 @@ export async function pollCreatedVideoGenerationTask(
 
 export async function pollVideoGenerationTaskStatus(config: AiConfig, task: VideoResponse) {
     const model = config.model || config.videoModel;
-    const pollId = videoPollId(config, model, task);
+    const pollId = videoPollId(model, task);
     if (!pollId) throw new VideoRequestError("视频接口没有返回任务 ID", task);
     try {
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data);
@@ -541,8 +541,8 @@ function isAgnesVideoModel(model: string) {
     return model.toLowerCase().includes("agnes-video");
 }
 
-function videoPollId(config: AiConfig, model: string, task: VideoResponse) {
-    return selectVideoPollId(model, isAIHubConfig({ ...config, model, videoModel: model }), task);
+function videoPollId(model: string, task: VideoResponse) {
+    return selectVideoPollId(model, task);
 }
 
 function normalizeVideoSeconds(value: string) {

@@ -4,10 +4,15 @@ export type VideoTaskIds = {
     video_id?: string;
 };
 
-export function selectVideoPollId(model: string, isAIHub: boolean, task: VideoTaskIds) {
+export function selectVideoPollId(model: string, task: VideoTaskIds) {
     if (model.toLowerCase().includes("agnes-video")) return task.video_id || task.id || task.task_id || "";
-    if (isAIHub) return task.task_id || task.id || task.video_id || "";
     return task.id || task.task_id || task.video_id || "";
+}
+
+export function resolveVideoTaskIds(model: string, task: VideoTaskIds, pollId = "") {
+    const stablePollId = pollId || selectVideoPollId(model, task);
+    const providerId = task.video_id || (task.task_id && task.task_id !== stablePollId ? task.task_id : "");
+    return { pollId: stablePollId, providerId };
 }
 
 export function classifyVideoPollingFailure(status: number, code: string | undefined, message: string) {

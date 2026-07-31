@@ -172,10 +172,21 @@ export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()
 function readVideoMeta(url: string) {
     return new Promise<{ width: number; height: number }>((resolve) => {
         const video = document.createElement("video");
-        const done = () => resolve({ width: video.videoWidth || 1280, height: video.videoHeight || 720 });
+        let settled = false;
+        const timer = window.setTimeout(done, 5000);
+        function done() {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timer);
+            video.onloadedmetadata = null;
+            video.onerror = null;
+            resolve({ width: video.videoWidth || 1280, height: video.videoHeight || 720 });
+        }
+        video.preload = "metadata";
         video.onloadedmetadata = done;
         video.onerror = done;
         video.src = url;
+        video.load();
     });
 }
 

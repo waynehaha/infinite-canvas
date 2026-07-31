@@ -1,29 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { classifyVideoPollingFailure, selectVideoPollId } from "../src/services/api/video-polling.ts";
+import { classifyVideoPollingFailure, resolveVideoTaskIds, selectVideoPollId } from "../src/services/api/video-polling.ts";
 
-test("AIHub 双 ID 响应优先使用公开 task_id", () => {
+test("AIHub 查询响应使用稳定的公开 id，不使用上游 task_id", () => {
     assert.equal(
-        selectVideoPollId("omni-fast", true, {
-            id: "task_upstream",
-            task_id: "task_public",
-            video_id: "task_upstream",
+        selectVideoPollId("omni-fast", {
+            id: "task_public",
+            task_id: "task_upstream",
         }),
         "task_public",
     );
 });
 
 test("AIHub 只有 task_id 时可以正常轮询", () => {
-    assert.equal(selectVideoPollId("omni-fast", true, { task_id: "task_public" }), "task_public");
+    assert.equal(selectVideoPollId("omni-fast", { task_id: "task_public" }), "task_public");
 });
 
 test("普通渠道保持优先使用 id", () => {
-    assert.equal(selectVideoPollId("veo-3", false, { id: "provider_id", task_id: "task_id" }), "provider_id");
+    assert.equal(selectVideoPollId("veo-3", { id: "provider_id", task_id: "task_id" }), "provider_id");
 });
 
 test("Agnes 保持优先使用 video_id", () => {
-    assert.equal(selectVideoPollId("agnes-video-1", false, { id: "task_id", video_id: "video_id" }), "video_id");
+    assert.equal(selectVideoPollId("agnes-video-1", { id: "task_id", video_id: "video_id" }), "video_id");
+});
+
+test("连续轮询不会让上游 task_id 覆盖公开任务 ID", () => {
+    const created = resolveVideoTaskIds("omni-fast", { id: "task_public", task_id: "task_public" });
+    const polled = resolveVideoTaskIds("omni-fast", { id: "task_public", task_id: "task_upstream" }, created.pollId);
+    assert.deepEqual(polled, { pollId: "task_public", providerId: "task_upstream" });
 });
 
 test("task_not_exist 会转换为明确且不可重试的错误", () => {

@@ -11,6 +11,7 @@ import { deleteCanvasProjects, deleteCanvasTasks } from "@/services/api/canvas-t
 import { createCanvasImageTask, pollCanvasImageTaskStatus, requestImageQuestion, type CanvasImageTask } from "@/services/api/image";
 import { createCanvasAudioTask, pollCanvasAudioTaskStatus, type CanvasAudioTask } from "@/services/api/audio";
 import { createVideoGenerationTask, pollVideoGenerationTaskStatus, VideoRequestError, VIDEO_POLL_INTERVAL_MS, type VideoResponse } from "@/services/api/video";
+import { resolveVideoTaskIds, selectVideoPollId } from "@/services/api/video-polling";
 import { defaultConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { collectImageStorageKeys, deleteStoredImages, resolveImageUrl, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
@@ -545,7 +546,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 pollingVideoNodeIdsRef.current.add(node.id);
                 void pollVideoGenerationTaskStatus(generationConfig, canvasVideoTaskFromMetadata(node.metadata))
                     .then((task) => {
-                        setNodes((prev) => applyCanvasVideoTaskUpdate(prev, node.id, task, generationConfig, node.metadata?.startedAt || Date.now(), { width: node.width, height: node.height }));
+                        setNodes((prev) => applyCanvasVideoTaskUpdate(prev, node.id, task, taskId, generationConfig, node.metadata?.startedAt || Date.now(), { width: node.width, height: node.height }));
                     })
                     .catch((error) => {
                         if (!(error instanceof VideoRequestError) || error.retryable) return;
@@ -2822,7 +2823,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     setNodes((prev) => (isEmptyVideoNode ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode } : node)) : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode]));
                     if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
                     const created = await createVideoGenerationTask(videoGenerationConfig, requestPrompt, { references: videoReferenceImages, firstFrame, lastFrame, videoReferences: generationContext.referenceVideos, audioReferences: generationContext.referenceAudios }, undefined, { clientTaskId, source: "canvas", sourceId: videoId });
-                    setNodes((prev) => applyCanvasVideoTaskUpdate(prev, videoId, created.task, videoGenerationConfig, generationStartedAt, spec));
+                    setNodes((prev) => applyCanvasVideoTaskUpdate(prev, videoId, created.task, created.pollId, videoGenerationConfig, generationStartedAt, spec));
                     return;
                 }
 
@@ -3372,7 +3373,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     const lastFrame = frameReferencesEnabled ? context?.lastFrame || null : null;
                     const references = frameReferencesEnabled ? retryImages : [...retryImages, ...[context?.firstFrame, context?.lastFrame].filter((image): image is ReferenceImage => Boolean(image))];
                     const created = await createVideoGenerationTask(videoGenerationConfig, requestPrompt, { references, firstFrame, lastFrame, videoReferences: context?.referenceVideos || [], audioReferences: context?.referenceAudios || [] }, undefined, { clientTaskId: retryVideoTaskId, source: "canvas", sourceId: node.id });
-                    setNodes((prev) => applyCanvasVideoTaskUpdate(prev, node.id, created.task, videoGenerationConfig, retryStartedAt, { width: node.width, height: node.height }));
+                    setNodes((prev) => applyCanvasVideoTaskUpdate(prev, node.id, created.task, created.pollId, videoGenerationConfig, retryStartedAt, { width: node.width, height: node.height }));
                     return;
                 }
                 if (node.type === CanvasNodeType.Audio) {
@@ -4469,9 +4470,10 @@ function getInputSummary(inputs: NodeGenerationInput[]) {
     };
 }
 
-function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, task: VideoResponse, config: AiConfig, startedAt: number, fallbackSize: { width: number; height: number }) {
+function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, task: VideoResponse, pollId: string, config: AiConfig, startedAt: number, fallbackSize: { width: number; height: number }) {
     return nodes.map((node) => {
         if (node.id !== nodeId) return node;
+        const taskIds = resolveVideoTaskIds(task.model || config.model, task, pollId);
         const progress = typeof task.progress === "number" ? Math.max(0, Math.min(100, task.progress)) : node.metadata?.progress || 0;
         const url = task.video_url || task.url || "";
         const completed = canvasVideoTaskCompleted(task);
@@ -4493,8 +4495,8 @@ function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
             startedAt: taskStartedAt,
             durationMs: Date.now() - taskStartedAt,
             progress,
-            videoTaskId: task.task_id || task.id || node.metadata?.videoTaskId,
-            videoTaskVideoId: task.video_id || node.metadata?.videoTaskVideoId,
+            videoTaskId: taskIds.pollId,
+            videoTaskVideoId: taskIds.providerId || node.metadata?.videoTaskVideoId,
         };
         if (!completed || !url) return { ...node, metadata };
         const taskSize = parseCanvasVideoTaskSize(task.size, fallbackSize);
@@ -4610,7 +4612,7 @@ function canvasVideoTaskFromMetadata(metadata?: CanvasNodeMetadata): VideoRespon
 }
 
 function canvasVideoTaskId(metadata?: CanvasNodeMetadata) {
-    return metadata?.videoTaskVideoId || metadata?.videoTaskId || "";
+    return selectVideoPollId(metadata?.model || "", { id: metadata?.videoTaskId, video_id: metadata?.videoTaskVideoId });
 }
 
 function canvasVideoTaskCompleted(task: VideoResponse) {
