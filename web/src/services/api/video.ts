@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
-import { aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } from "@/services/api/aihub/video";
+import { aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } from "@/services/api/aihub/video";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { isKIEGrokVideoModel } from "@/components/video-settings-panel";
 import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
@@ -204,7 +204,9 @@ async function materializeAIHubVideoTask(config: AiConfig, task: VideoResponse, 
     if (!isAIHubConfig(config)) return task;
     const rawUrl = task.video_url || task.url || "";
     if (!rawUrl || /^(?:https?:|blob:|data:)/i.test(rawUrl)) return task;
-    const downloadUrl = resolveAIHubTaskResultUrl(rawUrl, (path) => aiApiUrl(config, path), pollId);
+    const downloadUrl = usesAccountProxy(config)
+        ? resolveAIHubTaskResultUrl(rawUrl, (path) => aiApiUrl(config, path), pollId)
+        : aiHubTaskContentProxyUrl(pollId);
     const response = await fetch(downloadUrl, { headers: aiHeaders(config) });
     if (!response.ok) throw new VideoRequestError(`视频结果下载失败：${response.status}`, { task, downloadPath: `/videos/${pollId}/content` });
     const blob = await response.blob();

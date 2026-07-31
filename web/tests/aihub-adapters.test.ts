@@ -13,14 +13,14 @@ registerHooks({
 });
 
 const { createAIHubImageEditForm, createAIHubImageGenerationBody } = await import("../src/services/api/aihub/image.ts");
-const { aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } = await import("../src/services/api/aihub/video.ts");
+const { aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } = await import("../src/services/api/aihub/video.ts");
 
 test("AIHub 默认模型完整且不重复", () => {
-    assert.equal(AIHUB_DEFAULT_MODELS.length, 31);
-    assert.equal(new Set(AIHUB_DEFAULT_MODELS).size, 31);
+    assert.equal(AIHUB_DEFAULT_MODELS.length, 28);
+    assert.equal(new Set(AIHUB_DEFAULT_MODELS).size, 28);
     assert.deepEqual(
         Object.fromEntries(Object.entries(AIHUB_MODELS_BY_CAPABILITY).map(([key, models]) => [key, models.length])),
-        { text: 9, image: 8, video: 13, audio: 1 },
+        { text: 9, image: 7, video: 11, audio: 1 },
     );
     assert.equal(aihubModelCapability("gemini-3.1-flash-lite"), "text");
     assert.equal(aihubModelCapability("gemini-3.1-flash-image-4k"), "image");
@@ -66,6 +66,7 @@ test("Omni 单图字段和相对任务地址正确", () => {
     assert.equal(body.get("first_image"), null);
     assert.equal(resolveAIHubTaskResultUrl("/v1/videos/task/content", (path) => `/api/v1${path}`), "/api/v1/videos/task/content");
     assert.equal(resolveAIHubTaskResultUrl("/v1/videos/vid-internal/content", (path) => `/api/v1${path}`, "task-public"), "/api/v1/videos/task-public/content");
+    assert.equal(aiHubTaskContentProxyUrl("task/a b"), "/api/aihub/video-content?taskId=task%2Fa%20b");
     const publicImage = createAIHubVideoBody({
         model: "omni-fast",
         prompt: "生成视频",

@@ -171,3 +171,7 @@ export function resolveAIHubTaskResultUrl(value: string, resolveApiPath: (path: 
     const apiPath = normalized.replace(/^\/v1(?=\/)/, "");
     return resolveApiPath(apiPath.startsWith("/") ? apiPath : `/${apiPath}`);
 }
+
+export function aiHubTaskContentProxyUrl(taskId: string) {
+    return `/api/aihub/video-content?taskId=${encodeURIComponent(taskId)}`;
+}
