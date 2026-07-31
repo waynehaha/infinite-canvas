@@ -1,9 +1,6 @@
 services:
   app:
-    image: infinite-canvas:desktop
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/waynehaha/infinite-canvas:desktop-latest
     env_file:
       - .env
     volumes:
