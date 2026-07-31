@@ -17,6 +17,7 @@
 ## 开发文档
 
 - [仓库同步说明](overview/20260730-仓库同步说明.md)
+- [上游版本记录](overview/20260731-上游版本记录.md)
 - [本地开发](backend/local-development.md)
 - [接口响应约定](backend/api-response.md)
 - [系统配置数据结构](backend/system-settings.md)

@@ -10,7 +10,7 @@ description: 用最少步骤把无限画布跑起来
 ## Docker 启动
 
 ```bash
-git clone git@github.com:tigerowo/infinite-canvas.git
+git clone https://github.com/waynehaha/infinite-canvas.git
 cd infinite-canvas
 cp .env.example .env
 docker compose up -d

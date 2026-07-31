@@ -5,8 +5,8 @@
 <h1 align="center">无限画布 (infinite-canvas)</h1>
 
 <p align="center">
-  <a href="https://github.com/tigerowo/infinite-canvas"><img src="https://img.shields.io/github/stars/tigerowo/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
-  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.3.0-2563eb?style=flat-square" alt="Version"></a>
+  <a href="https://github.com/waynehaha/infinite-canvas"><img src="https://img.shields.io/github/stars/waynehaha/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
+  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.1.0-2563eb?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
   <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-ready-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker ready"></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.2-000000?style=flat-square&logo=nextdotjs" alt="Next.js"></a>
@@ -19,7 +19,7 @@
 
 APIMart 点此链接 [https://apimart.ai/register?aff=fWMrEv](https://apimart.ai/register?aff=fWMrEv) 注册后充值有积分奖励（支持主流 LLM，音频模型，视频模型）
 
-本项目基于 [basketikun(纯前端)](https://github.com/basketikun/infinite-canvas) 为底，合并 [HuFakai](https://github.com/HuFakai/infinite-canvas) 生图增强版基础上，针对视频和视频生成逻辑配置更加完善，完善后端云同步机制，不再依赖纯前端
+本项目基于 [tigerowo/infinite-canvas](https://github.com/tigerowo/infinite-canvas) 持续开发，并保留其上游来源说明。上游项目基于 [basketikun(纯前端)](https://github.com/basketikun/infinite-canvas) 为底，合并 [HuFakai](https://github.com/HuFakai/infinite-canvas) 生图增强版基础上，针对视频和视频生成逻辑配置更加完善，完善后端云同步机制，不再依赖纯前端。
 
 > [!CAUTION]
 > 项目目前处于开发阶段，不保证历史数据兼容。各种数据库结构和存储格式都可能直接调整，欢迎关注后续更新
@@ -71,7 +71,7 @@ APIMart 点此链接 [https://apimart.ai/register?aff=fWMrEv](https://apimart.ai
 ### 命令行启动
 
 ```bash
-git clone https://github.com/tigerowo/infinite-canvas.git
+git clone https://github.com/waynehaha/infinite-canvas.git
 cd infinite-canvas
 cp .env.example .env
 # 修改默认账号密码等信息
@@ -169,10 +169,10 @@ https://infinite-canvas-cpco.onrender.com?apiKey={key}&baseUrl={address}
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=tigerowo%2Finfinite-canvas&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=waynehaha%2Finfinite-canvas&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=tigerowo/infinite-canvas&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=tigerowo/infinite-canvas&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=tigerowo/infinite-canvas&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=waynehaha/infinite-canvas&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=waynehaha/infinite-canvas&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=waynehaha/infinite-canvas&type=date&legend=top-left" />
  </picture>
 </a>
