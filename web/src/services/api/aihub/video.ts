@@ -134,8 +134,8 @@ export function aiHubVideoFailureMessage(model: string, message: string) {
     if (/cannot unmarshal string into Go struct field .*images.*\[\]string|invalid request body must be valid json/i.test(normalized)) {
         return "多张参考图的参数格式不正确，请重新生成";
     }
-    if (/protected IP|identifiable real person|third-party content providers|I can(?:not|'t) generate (?:the|that) video/i.test(normalized)) {
-        return "内容触发了视频模型的安全限制，请更换可识别真人、受保护角色或相关描述后重新生成";
+    if (/protected IP|identifiable real person|third-party content providers|I can(?:not|'t) generate (?:the|that) video|Gemini couldn't generate (?:a|the) video/i.test(normalized)) {
+        return "视频模型拒绝了本次生成。可能是素材或提示词触发了安全限制，请更换素材或简化提示词后重新生成；直接重试通常无效";
     }
     return normalized;
 }
