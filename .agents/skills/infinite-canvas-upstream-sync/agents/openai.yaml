@@ -1,0 +1,4 @@
+interface:
+  display_name: "Infinite Canvas 上游同步"
+  short_description: "安全审查与同步 Infinite Canvas 上游更新并保护 AIHub 渠道定制"
+  default_prompt: "使用 $infinite-canvas-upstream-sync 审查并同步 Infinite Canvas 上游更新，保护 AIHub 渠道。"
