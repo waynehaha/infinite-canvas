@@ -15,6 +15,7 @@ import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
+import { getAIHubVideoReferenceError, isAIHubVideoPromptRequired } from "@/lib/aihub-reference-policy";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { modelKey, supportsVideoAudioGeneration, supportsVideoFrameReferences } from "@/lib/video-model-capabilities";
@@ -165,7 +166,7 @@ export default function VideoPage() {
     const aiHubImageLimit = aiHubCapability ? aiHubCapability.references?.images?.max || 0 : SEEDANCE_REFERENCE_LIMITS.images;
     const aiHubVideoLimit = aiHubCapability ? aiHubCapability.references?.videos?.max || 0 : SEEDANCE_REFERENCE_LIMITS.videos;
     const aiHubAudioLimit = aiHubCapability ? aiHubCapability.references?.audios?.max || 0 : SEEDANCE_REFERENCE_LIMITS.audios;
-    const canGenerate = Boolean(prompt.trim());
+    const canGenerate = Boolean(prompt.trim()) || !isAIHubVideoPromptRequired(model);
     const pendingCount = results.filter((item) => item.status === "pending").length;
     const klingWorkbench = resolveKlingWorkbenchConfig(videoConfig, model);
     const klingWorkbenchVariant = klingWorkbench?.variant || "";
@@ -179,7 +180,7 @@ export default function VideoPage() {
         setReferences((value) => value.slice(0, aiHubImageLimit));
         setVideoReferences((value) => value.slice(0, aiHubVideoLimit));
         setAudioReferences((value) => value.slice(0, aiHubAudioLimit));
-        if (aiHubCapability.references?.frames !== "pair") {
+        if (aiHubCapability.references?.frames?.mode !== "pair") {
             setFirstFrame(null);
             setLastFrame(null);
         }
@@ -614,7 +615,7 @@ export default function VideoPage() {
         const klingV26 = isAPIMartKlingV26Config(configValue, modelValue);
         const klingV3 = isKlingV3Config(configValue, modelValue);
         const kling = klingV26 || klingV3;
-        if (!text) {
+        if (!text && isAIHubVideoPromptRequired(modelValue)) {
             message.error("请输入视频提示词");
             return null;
         }
@@ -663,7 +664,12 @@ export default function VideoPage() {
             message.error(`当前模型需要至少 ${capability.references.images.required} 张参考图`);
             return null;
         }
-        const frameReferencesEnabled = !kling && (capability?.references?.frames === "pair" || supportsVideoFrameReferences(modelValue));
+        const capabilityReferenceError = getAIHubVideoReferenceError(modelValue, { images: referenceItems, videos: videoReferenceItems, audios: audioReferenceItems, firstFrame: firstFrameItem, lastFrame: lastFrameItem });
+        if (capabilityReferenceError) {
+            message.error(capabilityReferenceError);
+            return null;
+        }
+        const frameReferencesEnabled = !kling && (capability ? Boolean(capability.references?.frames) : supportsVideoFrameReferences(modelValue));
         return { text, model: modelValue, config: buildVideoConfig({ ...configValue, videoNegativePrompt: currentNegativePrompt }, modelValue), references: [...referenceItems].slice(0, imageLimit), firstFrame: frameReferencesEnabled ? firstFrameItem : null, lastFrame: frameReferencesEnabled ? lastFrameItem : null, videoReferences: [...videoReferenceItems].slice(0, videoLimit), audioReferences: [...audioReferenceItems].slice(0, audioLimit), taskCount: normalizeVideoCount(taskCountValue) };
     };
 
@@ -1390,7 +1396,7 @@ function WorkbenchPanel({
     setBottomSettingsCollapsed?: (value: boolean) => void;
 }) {
     const aiHubCapability = getAIHubVideoCapability(model);
-    const frameReferencesEnabled = aiHubCapability?.references?.frames === "pair" || supportsVideoFrameReferences(model);
+    const frameReferencesEnabled = aiHubCapability ? Boolean(aiHubCapability.references?.frames) : supportsVideoFrameReferences(model);
     const imageReferencesEnabled = !aiHubCapability || Boolean(aiHubCapability.references?.images?.max);
     const videoReferencesEnabled = !aiHubCapability || Boolean(aiHubCapability.references?.videos?.max);
     const audioReferencesEnabled = !aiHubCapability || Boolean(aiHubCapability.references?.audios?.max);

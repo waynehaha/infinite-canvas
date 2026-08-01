@@ -8,10 +8,14 @@ import { FileText, Image as ImageIcon, Music2, Video, X } from "lucide-react";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { NodeGenerationInput } from "./canvas-node-generation";
+import type { CanvasGenerationMode } from "../types";
+import { isCanvasImageReferenceInputSupported, isCanvasVideoReferenceInputSupported } from "../utils/canvas-generation-reference-policy";
 
 type CanvasConfigComposerProps = {
     value: string;
     inputs: NodeGenerationInput[];
+    mode: CanvasGenerationMode;
+    model: string;
     onChange: (value: string) => void;
     onClose: () => void;
 };
@@ -26,7 +30,7 @@ type MentionState = {
 
 export const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]/g;
 
-export function CanvasConfigComposer({ value, inputs, onChange, onClose }: CanvasConfigComposerProps) {
+export function CanvasConfigComposer({ value, inputs, mode, model, onChange, onClose }: CanvasConfigComposerProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
@@ -35,12 +39,13 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const tokens = useMemo(() => parseComposerTokens(value), [value]);
     const referenceById = useMemo(() => new Map(inputs.map((input) => [input.nodeId, input])), [inputs]);
+    const compatibleInputs = useMemo(() => inputs.filter((input) => isComposerInputSupported(mode, model, input)), [inputs, mode, model]);
     const candidates = useMemo(() => {
         if (!mention) return [];
         const query = (mention.query || "").trim().toLowerCase();
-        if (!query) return inputs;
-        return inputs.filter((input) => `${resourceLabel(input, inputs)} ${input.title} ${input.text || ""}`.toLowerCase().includes(query));
-    }, [inputs, mention]);
+        if (!query) return compatibleInputs;
+        return compatibleInputs.filter((input) => `${resourceLabel(input, inputs)} ${input.title} ${input.text || ""}`.toLowerCase().includes(query));
+    }, [compatibleInputs, inputs, mention]);
 
     useEffect(() => {
         if (document.activeElement === editorRef.current) return;
@@ -53,9 +58,9 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
                 return;
             }
             const input = referenceById.get(token.nodeId);
-            if (input) editor.append(createReferenceChip(input, inputs, theme, setImagePreview));
+            if (input) editor.append(createReferenceChip(input, inputs, theme, setImagePreview, !isComposerInputSupported(mode, model, input)));
         });
-    }, [inputs, referenceById, theme, tokens]);
+    }, [inputs, mode, model, referenceById, theme, tokens]);
 
     const syncFromEditor = () => {
         const editor = editorRef.current;
@@ -68,7 +73,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
     const syncMention = () => {
         const text = textBeforeCaret();
         const match = /@([^\s@]*)$/.exec(text);
-        if (!match || !inputs.length) {
+        if (!match || !compatibleInputs.length) {
             closeMention();
             return;
         }
@@ -252,18 +257,30 @@ function ResourcePreview({ input }: { input: NodeGenerationInput }) {
     );
 }
 
-function createReferenceChip(input: NodeGenerationInput, inputs: NodeGenerationInput[], theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImagePreview: (url: string) => void) {
+function isComposerInputSupported(mode: CanvasGenerationMode, model: string, input: NodeGenerationInput) {
+    if (mode === "video") return isCanvasVideoReferenceInputSupported(model, input);
+    if (mode === "image") return isCanvasImageReferenceInputSupported(model, input);
+    return true;
+}
+
+function createReferenceChip(input: NodeGenerationInput, inputs: NodeGenerationInput[], theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImagePreview: (url: string) => void, unsupported = false) {
     const wrapper = document.createElement("span");
     wrapper.contentEditable = "false";
     wrapper.dataset.referenceNodeId = input.nodeId;
     wrapper.className = "mx-px inline-flex h-7 max-w-40 items-center justify-center overflow-hidden rounded-md border px-1 text-xs leading-none align-middle";
     Object.assign(wrapper.style, chipStyle(theme));
+    if (unsupported) {
+        wrapper.style.borderStyle = "dashed";
+        wrapper.style.opacity = "0.58";
+        wrapper.title = "当前模型不支持这类参考素材";
+    }
     if (input.type === "image" && input.image) {
         const image = document.createElement("img");
         image.src = input.image.dataUrl;
         image.alt = input.title;
         image.className = "size-6 rounded object-cover";
         wrapper.className = "mx-px inline-flex size-6 items-center justify-center overflow-hidden rounded align-middle";
+        if (unsupported) wrapper.className += " opacity-60 grayscale";
         wrapper.appendChild(image);
         wrapper.addEventListener("click", (event) => {
             event.preventDefault();

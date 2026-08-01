@@ -62,8 +62,13 @@ test("Omni 单图字段和相对任务地址正确", () => {
         videoReferences: [],
         audioReferences: [],
     });
-    assert.equal(body.get("image_url"), "data:image/png;base64,AA==");
-    assert.equal(body.get("first_image"), null);
+    assert.deepEqual(body, {
+        model: "omni-fast",
+        prompt: "生成视频",
+        seconds: "10",
+        aspect_ratio: "16:9",
+        image_url: "data:image/png;base64,AA==",
+    });
     assert.equal(resolveAIHubTaskResultUrl("/v1/videos/task/content", (path) => `/api/v1${path}`), "/api/v1/videos/task/content");
     assert.equal(resolveAIHubTaskResultUrl("/v1/videos/vid-internal/content", (path) => `/api/v1${path}`, "task-public"), "/api/v1/videos/task-public/content");
     assert.equal(aiHubTaskContentProxyUrl("task/a b"), "/api/aihub/video-content?taskId=task%2Fa%20b");
@@ -77,7 +82,7 @@ test("Omni 单图字段和相对任务地址正确", () => {
         videoReferences: [],
         audioReferences: [],
     });
-    assert.equal(publicImage.get("image_url"), "https://cdn.example.com/reference.png");
+    assert.equal((publicImage as Record<string, unknown>).image_url, "https://cdn.example.com/reference.png");
     assert.equal(aiHubVideoFailureMessage("omni-fast", "bad_reference_image: failed to fetch reference image: HTTP 403"), "参考图片的源站拒绝了 AIHub 读取（403），请将图片下载后重新上传再试");
 });
 

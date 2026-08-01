@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { getAIHubImageCapability } from "@/lib/aihub-model-capabilities";
+import { getAIHubImageReferenceError } from "@/lib/aihub-reference-policy";
 import { ModelPicker } from "@/components/model-picker";
 import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
@@ -265,6 +266,8 @@ export function CreativeWorkflowWorkspace({
     const workflowCategories = useMemo(() => Array.from(new Set(workflows.map((workflow) => workflow.category || "未分类"))).sort((a, b) => a.localeCompare(b, "zh-CN")), [workflows]);
 
     const renderedPrompt = useMemo(() => (runningWorkflow ? renderWorkflowPrompt(runningWorkflow, inputValues) : ""), [inputValues, runningWorkflow]);
+    const runningWorkflowRuntime = runningWorkflow ? resolveWorkflowRuntime(runningWorkflow, effectiveConfig) : null;
+    const workflowReferenceError = runningWorkflowRuntime ? getAIHubImageReferenceError(runningWorkflowRuntime.model, workflowReferences) : "";
     const runningTaskCount = workflowTasks.filter((task) => task.status === "running").length;
     const activeSeriesDrafts = seriesDrafts.filter((item) => item.status !== "success");
     const agentModel = agentTextModel || effectiveConfig.textModel || "";
@@ -355,12 +358,28 @@ export function CreativeWorkflowWorkspace({
 
     const addWorkflowReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
+        if (!runningWorkflowRuntime || !imageFiles.length) return;
+        const pendingError = getAIHubImageReferenceError(runningWorkflowRuntime.model, [
+            ...workflowReferences,
+            ...imageFiles.map((file) => ({ bytes: file.size })),
+        ]);
+        if (pendingError) {
+            message.error(pendingError);
+            return;
+        }
         const next = await Promise.all(
             imageFiles.map(async (file) => {
                 const image = await uploadImage(file);
-                return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, source: "upload" as const, temporary: true };
+                return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes, width: image.width, height: image.height, source: "upload" as const, temporary: true };
             }),
         );
+        const nextError = getAIHubImageReferenceError(runningWorkflowRuntime.model, [...workflowReferences, ...next]);
+        if (nextError) {
+            const keys = next.map((item) => item.storageKey).filter((key): key is string => Boolean(key));
+            if (keys.length) await deleteStoredImages(keys).catch(() => undefined);
+            message.error(nextError);
+            return;
+        }
         setWorkflowReferences((value) => [...value, ...next]);
     };
 
@@ -381,7 +400,7 @@ export function CreativeWorkflowWorkspace({
         const next = await Promise.all(
             imageFiles.map(async (file) => {
                 const image = await uploadImage(file);
-                return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, source: "upload" as const, temporary: true };
+                return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes, width: image.width, height: image.height, source: "upload" as const, temporary: true };
             }),
         );
         setAgentReferences((value) => [...value, ...next]);
@@ -416,18 +435,28 @@ export function CreativeWorkflowWorkspace({
             message.warning("视频素材不能作为工作流参考图");
             return;
         }
+        if (!runningWorkflowRuntime) return;
+        const nextReference = {
+            id: nanoid(),
+            name: payload.title,
+            type: payload.mimeType || "image/png",
+            dataUrl: payload.dataUrl,
+            storageKey: payload.storageKey,
+            bytes: payload.bytes,
+            width: payload.width,
+            height: payload.height,
+            source: payload.source === "asset" ? "asset" : "library",
+            assetId: payload.assetId,
+            temporary: false,
+        };
+        const nextError = getAIHubImageReferenceError(runningWorkflowRuntime.model, [...workflowReferences, nextReference]);
+        if (nextError) {
+            message.error(nextError);
+            return;
+        }
         setWorkflowReferences((value) => [
             ...value,
-            {
-                id: nanoid(),
-                name: payload.title,
-                type: payload.mimeType || "image/png",
-                dataUrl: payload.dataUrl,
-                storageKey: payload.storageKey,
-                source: payload.source === "asset" ? "asset" : "library",
-                assetId: payload.assetId,
-                temporary: false,
-            },
+            nextReference,
         ]);
         setWorkflowAssetPickerOpen(false);
     };
@@ -577,6 +606,10 @@ export function CreativeWorkflowWorkspace({
 
     const runWorkflow = async () => {
         if (!runningWorkflow) return;
+        if (workflowReferenceError) {
+            message.error(workflowReferenceError);
+            return;
+        }
         const missing = runningWorkflow.variables.find((item) => item.required && !String(inputValues[item.key] || "").trim());
         if (missing) {
             message.error(`请填写 ${missing.label}`);
@@ -591,6 +624,10 @@ export function CreativeWorkflowWorkspace({
 
     const generateSeriesPromptDrafts = async () => {
         if (!runningWorkflow) return;
+        if (workflowReferenceError) {
+            message.error(workflowReferenceError);
+            return;
+        }
         const promptModel = runningWorkflow.seriesConfig.promptModel || effectiveConfig.textModel || effectiveConfig.model;
         const promptChannelId = runningWorkflow.seriesConfig.promptChannelId || effectiveConfig.textChannelId;
         const textConfig = { ...effectiveConfig, model: promptModel, textModel: promptModel, textChannelId: promptChannelId, activeChannelId: promptChannelId, systemPrompt: effectiveConfig.systemPrompts.workflow || effectiveConfig.systemPrompt };
@@ -670,6 +707,11 @@ export function CreativeWorkflowWorkspace({
     const startWorkflowImageTask = (workflow: CreativeWorkflow, promptSnapshot: string, inputSnapshot: Record<string, string>, referencesSnapshot: ReferenceImage[], countOverride?: number, seriesDraftId?: string, seriesTitle?: string, seriesIndex?: number) => {
         const runtime = resolveWorkflowRuntime(workflow, effectiveConfig);
         const model = runtime.model;
+        const referenceError = getAIHubImageReferenceError(model, referencesSnapshot);
+        if (referenceError) {
+            message.error(referenceError);
+            return;
+        }
         const runConfig = buildRunConfig(effectiveConfig, workflow.config, runtime);
         if (!isAiConfigReady(runConfig, model)) {
             message.warning("请先完成 API 配置");
@@ -1235,8 +1277,9 @@ export function CreativeWorkflowWorkspace({
                                 ) : (
                                     <div className="mt-3 rounded-md border border-dashed border-stone-300 py-5 text-center text-xs text-stone-500 dark:border-stone-800">未添加参考图</div>
                                 )}
+                                {workflowReferenceError ? <p className="mt-2 flex items-start gap-1.5 text-xs text-red-500"><AlertCircle className="mt-0.5 size-3.5 shrink-0" />{workflowReferenceError}</p> : null}
                             </div>
-                            <Button block type="primary" size="large" loading={seriesDraftLoading} icon={runningWorkflow.mode === "multi_image_series" ? <Layers3 className="size-4" /> : <Play className="size-4" />} onClick={() => void runWorkflow()}>
+                            <Button block type="primary" size="large" loading={seriesDraftLoading} disabled={Boolean(workflowReferenceError)} icon={runningWorkflow.mode === "multi_image_series" ? <Layers3 className="size-4" /> : <Play className="size-4" />} onClick={() => void runWorkflow()}>
                                 {runningWorkflow.mode === "multi_image_series" ? "生成提示词" : "启动任务"}
                             </Button>
                         </div>
@@ -2125,8 +2168,5 @@ function referenceUsedByWorkflowTask(reference: ReferenceImage, tasks: WorkflowT
 function formatDate(value: number) {
     return new Date(value).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
-
-
-
 
 

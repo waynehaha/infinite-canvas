@@ -36,6 +36,7 @@ import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { getAIHubImageCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
+import { getAIHubImageReferenceError } from "@/lib/aihub-reference-policy";
 import {
     CreativeWorkflowWorkspace,
     type WorkflowExternalTaskFailure,
@@ -170,7 +171,8 @@ export default function ImagePage() {
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const imageCapability = getAIHubImageCapability(model);
     const imageReferenceLimit = imageCapability ? imageCapability.references?.images.max || 0 : 15;
-    const canGenerate = Boolean(prompt.trim());
+    const referenceError = getAIHubImageReferenceError(model, references);
+    const canGenerate = Boolean(prompt.trim()) && !referenceError;
     const generationCount = Math.max(1, Math.min(imageCapability?.count?.max || 10, Number(config.count) || 1));
     const pendingCount = results.filter((item) => item.status === "pending").length;
     const pendingLogCount = logs.filter((log) => log.status === "生成中" && log.task && !log.images.length).length;
@@ -318,13 +320,18 @@ export default function ImagePage() {
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/")).slice(0, Math.max(0, imageReferenceLimit - references.length));
         if (!imageFiles.length) return;
+        const nextReferenceError = getAIHubImageReferenceError(model, [...references, ...imageFiles.map((file) => ({ bytes: file.size }))]);
+        if (nextReferenceError) {
+            message.warning(nextReferenceError);
+            return;
+        }
         setUploadingCount(imageFiles.length);
         const hideLoading = message.loading("正在上传参考图...", 0);
         try {
             const nextReferences = await Promise.all(
                 imageFiles.map(async (file) => {
                     const image = await uploadImage(file);
-                    return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, source: "upload" as const, temporary: true };
+                    return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes, width: image.width, height: image.height, source: "upload" as const, temporary: true };
                 }),
             );
             setReferences((value) => [...value, ...nextReferences].slice(0, imageReferenceLimit));
@@ -345,13 +352,18 @@ export default function ImagePage() {
                 message.error("剪切板里没有可读取的图片");
                 return;
             }
+            const nextReferenceError = getAIHubImageReferenceError(model, [...references, ...blobs.map((blob) => ({ bytes: blob.size }))]);
+            if (nextReferenceError) {
+                message.warning(nextReferenceError);
+                return;
+            }
             setUploadingCount(blobs.length);
             const hideLoading = message.loading("正在上传并读取参考图...", 0);
             try {
                 const nextReferences = await Promise.all(
                     blobs.map(async (blob, index) => {
                         const image = await uploadImage(blob);
-                        return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, source: "clipboard" as const, temporary: true };
+                        return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes, width: image.width, height: image.height, source: "clipboard" as const, temporary: true };
                     }),
                 );
                 setReferences((value) => [...value, ...nextReferences].slice(0, imageReferenceLimit));
@@ -401,6 +413,10 @@ export default function ImagePage() {
     };
 
     const generate = async () => {
+        if (referenceError) {
+            message.error(referenceError);
+            return;
+        }
         const snapshot = buildRequestSnapshot();
         if (!snapshot) return;
         setPrompt("");
@@ -659,6 +675,9 @@ export default function ImagePage() {
                           type: payload.mimeType || "image/png",
                           dataUrl: safeUrl,
                           storageKey: payload.storageKey,
+                          bytes: payload.bytes,
+                          width: payload.width,
+                          height: payload.height,
                           source: payload.source === "library" ? "library" : "asset",
                           assetId: payload.assetId,
                           temporary: false,
@@ -669,10 +688,22 @@ export default function ImagePage() {
                     message.error("引入素材失败：图片数据为空");
                     return;
                 }
+                const nextError = getAIHubImageReferenceError(model, [...references, reference]);
+                if (nextError) {
+                    message.error(nextError);
+                    return;
+                }
                 setReferences((value) => [...value, reference].slice(0, imageReferenceLimit));
             } else {
                 const stored = await uploadImage(payload.dataUrl);
-                setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, source: payload.source === "library" ? "library" : "upload", temporary: payload.source !== "library" }].slice(0, imageReferenceLimit));
+                const nextReference = { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, bytes: stored.bytes, width: stored.width, height: stored.height, source: payload.source === "library" ? "library" : "upload", temporary: payload.source !== "library" };
+                const nextError = getAIHubImageReferenceError(model, [...references, nextReference]);
+                if (nextError) {
+                    if (stored.storageKey) await deleteStoredImages([stored.storageKey]).catch(() => undefined);
+                    message.error(nextError);
+                    return;
+                }
+                setReferences((value) => [...value, nextReference].slice(0, imageReferenceLimit));
             }
         } else {
             message.warning("视频素材不能作为生图参考图");
@@ -1084,6 +1115,7 @@ export default function ImagePage() {
                             config={effectiveConfig}
                             model={model}
                             canGenerate={canGenerate}
+                            referenceError={referenceError}
                             pendingCount={pendingCount}
                             updateConfig={updateConfig}
                             openConfigDialog={openConfigDialog}
@@ -1175,6 +1207,7 @@ export default function ImagePage() {
                             config={effectiveConfig}
                             model={model}
                             canGenerate={canGenerate}
+                            referenceError={referenceError}
                             pendingCount={pendingCount}
                             updateConfig={updateConfig}
                             openConfigDialog={openConfigDialog}
@@ -1283,6 +1316,7 @@ function WorkbenchPanel({
     config,
     model,
     canGenerate,
+    referenceError,
     pendingCount,
     updateConfig,
     openConfigDialog,
@@ -1305,6 +1339,7 @@ function WorkbenchPanel({
     config: AiConfig;
     model: string;
     canGenerate: boolean;
+    referenceError: string;
     pendingCount: number;
     updateConfig: UpdateAiConfig;
     openConfigDialog: (shouldPromptContinue?: boolean) => void;
@@ -1397,6 +1432,7 @@ function WorkbenchPanel({
                             </Button>
                         </div>
                         {referencesEnabled && (references.length || uploadingCount > 0) ? <ReferenceStrip className="mt-3" references={references} compact onRemoveReference={onRemoveReference} uploadingCount={uploadingCount} /> : null}
+                        {referenceError ? <p className="flex items-center gap-1.5 text-xs text-red-500"><AlertCircle className="size-3.5 shrink-0" />{referenceError}</p> : null}
                     </div>
                 </div>
             </div>
@@ -1436,6 +1472,7 @@ function WorkbenchPanel({
                             <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={onOpenAssetPicker}>从素材库选择</Button>
                         </div>
                         <ReferenceStrip references={references} onRemoveReference={onRemoveReference} uploadingCount={uploadingCount} />
+                        {referenceError ? <p className="flex items-start gap-1.5 text-xs text-red-500"><AlertCircle className="mt-0.5 size-3.5 shrink-0" />{referenceError}</p> : null}
                     </div>
                 </section> : null}
 
@@ -2789,10 +2826,6 @@ function buildLog({
 function formatLogTime(value: number) {
     return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
-
-
-
-
 
 
 

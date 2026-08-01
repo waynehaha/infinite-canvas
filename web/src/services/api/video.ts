@@ -201,6 +201,9 @@ export async function pollVideoGenerationTaskStatus(config: AiConfig, task: Vide
     if (!pollId) throw new VideoRequestError("视频接口没有返回任务 ID", task);
     try {
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data);
+        if (isAIHubConfig(config) && isFailedVideoStatus(video.status) && video.error?.message) {
+            return { ...video, error: { ...video.error, message: aiHubVideoFailureMessage(model, video.error.message) } };
+        }
         return isCompletedVideoStatus(video.status) || video.video_url || video.url ? materializeAIHubVideoTask(config, video, pollId) : video;
     } catch (error) {
         throw toVideoPollingError(error);

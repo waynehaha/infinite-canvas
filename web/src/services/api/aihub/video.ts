@@ -32,6 +32,14 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
     body.set("model", input.model);
     body.set("prompt", input.prompt);
     if (capability) {
+        const hasFirstFrame = Boolean(input.firstFrame);
+        const hasLastFrame = Boolean(input.lastFrame);
+        const frameCapability = capability.references?.frames;
+        if ((hasFirstFrame || hasLastFrame) && !frameCapability) throw new Error(`${capability.model} 不支持首尾帧`);
+        if (frameCapability?.mode === "pair" && hasFirstFrame !== hasLastFrame) throw new Error("首尾帧必须同时提供");
+        if (frameCapability?.exclusive && hasFirstFrame && hasLastFrame && (input.references.length || input.videoReferences.length || input.audioReferences.length)) {
+            throw new Error("首尾帧模式不能同时添加其他参考素材");
+        }
         assertMediaLimit("参考图", capability.references?.images, [...input.references, ...(input.firstFrame ? [input.firstFrame] : []), ...(input.lastFrame ? [input.lastFrame] : [])]);
         assertMediaLimit("参考视频", capability.references?.videos, input.videoReferences);
         assertMediaLimit("参考音频", capability.references?.audios, input.audioReferences);
@@ -39,16 +47,15 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
     if (imageCapability) assertMediaLimit("参考图", imageCapability.references?.images, input.references);
 
     if (model === "gpt-image-2-2k" || model === "gpt-image-2-3.5k") {
-        if (input.references.length > 6) throw new Error("GPT-Image 高清模型最多支持 6 张参考图");
+        const maxReferences = imageCapability?.references?.images.max || 0;
         body.set("aspect_ratio", aspectRatio);
         if (input.references[0]) body.set("image_url", input.references[0]);
-        if (input.references.length > 1) body.set("reference_image_urls", JSON.stringify(input.references.slice(0, 6)));
+        if (input.references.length > 1) body.set("reference_image_urls", JSON.stringify(input.references.slice(0, maxReferences)));
         return body;
     }
 
     if (model.startsWith("grok-imagine-video")) {
-        if (input.references.length > 7) throw new Error("Grok 视频最多支持 7 张参考图");
-        const references = input.references.slice(0, 7);
+        const references = input.references.slice(0, capability?.references?.images?.max || 0);
         if (model.includes("1.5") && !references.length) throw new Error("Grok Imagine 1.5 需要至少一张参考图");
         body.set("seconds", seconds);
         body.set("size", aspectRatio);
@@ -61,16 +68,12 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
         const source = input.videoReferences[0];
         if (!source) throw new Error("Veo-Clean 需要上传一个待去水印视频");
         if (!(source instanceof File)) throw new Error("Veo-Clean 需要上传本地视频文件");
-        if (source.size > 20 * 1024 * 1024) throw new Error("Veo-Clean 视频不能超过 20MB");
         body.set("prompt", input.prompt || "remove watermark");
         body.set("input_video", source);
         return body;
     }
 
     if (isAIHubSeedanceModel(input.model)) {
-        if (input.references.length > 9) throw new Error("Seedance 最多支持 9 张参考图");
-        if (input.videoReferences.length > 3) throw new Error("Seedance 最多支持 3 个参考视频");
-        if (input.audioReferences.length > 3) throw new Error("Seedance 最多支持 3 个参考音频");
         body.set("duration", seconds);
         body.set("aspect_ratio", aspectRatio);
         if (input.firstFrame || input.lastFrame) {
@@ -80,31 +83,39 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
             body.set("last_image_url", input.lastFrame);
             return body;
         }
-        const references = input.references.slice(0, 9);
+        const references = input.references.slice(0, capability?.references?.images?.max || 0);
         if ((input.videoReferences.length || input.audioReferences.length) && !references.length) throw new Error("Seedance 视频或音频参考必须同时提供至少一张主图");
         if (references.length) body.set("reference_image_urls", JSON.stringify(references));
-        appendMedia(body, "reference_videos", input.videoReferences.slice(0, 3));
-        appendMedia(body, "reference_audios", input.audioReferences.slice(0, 3));
+        appendMedia(body, "reference_videos", input.videoReferences.slice(0, capability?.references?.videos?.max || 0));
+        appendMedia(body, "reference_audios", input.audioReferences.slice(0, capability?.references?.audios?.max || 0));
         return body;
     }
 
     if (isAIHubOmniModel(input.model)) {
-        if (input.references.length > 5) throw new Error("Omni 最多支持 5 张参考图");
-        if (input.videoReferences.length > 2) throw new Error("Omni V2V 最多支持 2 个参考视频");
-        [...input.references, input.firstFrame, input.lastFrame].forEach(assertAIHubOmniImageSize);
-        body.set("seconds", seconds);
-        body.set("aspect_ratio", aspectRatio);
+        const values: Record<string, unknown> = {
+            model: input.model,
+            prompt: input.prompt,
+            seconds,
+            aspect_ratio: aspectRatio,
+        };
         if (model.includes("v2v")) {
             if (!input.videoReferences.length) throw new Error("Omni V2V 需要至少一个参考视频");
-            appendOmniVideos(body, input.videoReferences.slice(0, 2));
+            if (input.videoReferences.every((value) => typeof value === "string")) {
+                values.video_url = input.videoReferences[0];
+                if (input.videoReferences.length > 1) values.videos = input.videoReferences;
+                return values;
+            }
+            body.set("seconds", seconds);
+            body.set("aspect_ratio", aspectRatio);
+            appendOmniVideos(body, input.videoReferences.slice(0, capability?.references?.videos?.max || 0));
             return body;
         }
-        const references = input.references.slice(0, 5);
-        if (input.firstFrame) body.set("first_image_url", input.firstFrame);
-        if (input.lastFrame) body.set("last_image_url", input.lastFrame);
-        if (!input.firstFrame && references[0]) body.set("image_url", references[0]);
-        if (references.length > 1) body.set("images", JSON.stringify(references));
-        return body;
+        const references = input.references.slice(0, capability?.references?.images?.max || 0);
+        if (input.firstFrame) values.first_image_url = input.firstFrame;
+        if (input.lastFrame) values.last_image_url = input.lastFrame;
+        if (!input.firstFrame && references[0]) values.image_url = references[0];
+        if (references.length > 1) values.images = references;
+        return values;
     }
 
     body.set("seconds", seconds);
@@ -116,18 +127,36 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
 }
 
 export function aiHubVideoFailureMessage(model: string, message: string) {
-    if (isAIHubOmniModel(model) && /bad_reference_image|failed to fetch reference image|reference upload failed/i.test(message) && /403|forbidden/i.test(message)) {
+    const normalized = unwrapAIHubErrorMessage(message);
+    if (isAIHubOmniModel(model) && /bad_reference_image|failed to fetch reference image|reference upload failed/i.test(normalized) && /403|forbidden/i.test(normalized)) {
         return "参考图片的源站拒绝了 AIHub 读取（403），请将图片下载后重新上传再试";
     }
-    return message;
+    if (/cannot unmarshal string into Go struct field .*images.*\[\]string|invalid request body must be valid json/i.test(normalized)) {
+        return "多张参考图的参数格式不正确，请重新生成";
+    }
+    if (/protected IP|identifiable real person|third-party content providers|I can(?:not|'t) generate (?:the|that) video/i.test(normalized)) {
+        return "内容触发了视频模型的安全限制，请更换可识别真人、受保护角色或相关描述后重新生成";
+    }
+    return normalized;
 }
 
-function assertAIHubOmniImageSize(value?: string) {
-    const match = value?.match(/^data:image\/[\w.+-]+;base64,([\s\S]+)$/i);
-    if (!match) return;
-    const base64 = match[1].replace(/\s/g, "");
-    const bytes = Math.floor((base64.length * 3) / 4) - (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0);
-    if (bytes > 8 * 1024 * 1024) throw new Error("Omni 单张参考图片不能超过 8MB");
+function unwrapAIHubErrorMessage(message: string) {
+    let current = message.trim();
+    for (let depth = 0; depth < 4; depth += 1) {
+        try {
+            const parsed = JSON.parse(current) as { message?: unknown; error?: unknown };
+            const error = parsed?.error;
+            const next =
+                (error && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : "") ||
+                (typeof error === "string" ? error : "") ||
+                (typeof parsed?.message === "string" ? parsed.message : "");
+            if (!next || next.trim() === current) break;
+            current = next.trim();
+        } catch {
+            break;
+        }
+    }
+    return current;
 }
 
 function assertMediaLimit(label: string, limit: { max: number; maxBytes?: number; maxTotalBytes?: number } | undefined, values: AIHubMediaValue[]) {
