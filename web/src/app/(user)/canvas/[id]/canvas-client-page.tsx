@@ -553,12 +553,18 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 const generationConfig = buildGenerationConfig(effectiveConfig, node, "video");
                 if (!taskId || !isAiConfigReady(generationConfig, generationConfig.model)) return;
                 pollingVideoNodeIdsRef.current.add(node.id);
-                void pollVideoGenerationTaskStatus(generationConfig, canvasVideoTaskFromMetadata(node.metadata))
+                void pollVideoGenerationTaskStatus(generationConfig, canvasVideoTaskFromMetadata(node.metadata), (task) => {
+                    setNodes((prev) => applyCanvasVideoTaskProgressUpdate(prev, node.id, task, taskId, generationConfig, node.metadata?.startedAt || Date.now()));
+                })
                     .then((task) => {
                         setNodes((prev) => applyCanvasVideoTaskUpdate(prev, node.id, task, taskId, generationConfig, node.metadata?.startedAt || Date.now(), { width: node.width, height: node.height }));
                     })
                     .catch((error) => {
-                        if (!(error instanceof VideoRequestError) || error.retryable) return;
+                        if (!(error instanceof VideoRequestError)) return;
+                        if (error.retryable) {
+                            setNodes((prev) => prev.map((item) => (item.id === node.id && (item.metadata?.progress || 0) >= 100 ? { ...item, metadata: { ...item.metadata, errorDetails: "视频已生成，结果暂未就绪，正在自动重试" } } : item)));
+                            return;
+                        }
                         setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error.message } } : item)));
                     })
                     .finally(() => {
@@ -4572,6 +4578,29 @@ function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
                 bytes: task.bytes || 0,
                 mimeType: task.mimeType || task.mime_type || "video/mp4",
                 progress: 100,
+            },
+        };
+    });
+}
+
+function applyCanvasVideoTaskProgressUpdate(nodes: CanvasNodeData[], nodeId: string, task: VideoResponse, pollId: string, config: AiConfig, startedAt: number) {
+    return nodes.map((node) => {
+        if (node.id !== nodeId) return node;
+        const taskIds = resolveVideoTaskIds(task.model || config.model, task, pollId);
+        const failed = canvasVideoTaskFailed(task);
+        const completed = canvasVideoTaskCompleted(task);
+        const taskStartedAt = parseCanvasVideoTaskTime(task.started_at ?? task.startedAt ?? task.created_at ?? task.createdAt) || startedAt;
+        return {
+            ...node,
+            metadata: {
+                ...node.metadata,
+                status: failed ? NODE_STATUS_ERROR : NODE_STATUS_LOADING,
+                errorDetails: failed ? task.error?.message || "视频生成失败" : undefined,
+                progress: completed ? 100 : typeof task.progress === "number" ? Math.max(0, Math.min(100, task.progress)) : node.metadata?.progress || 0,
+                startedAt: taskStartedAt,
+                durationMs: Date.now() - taskStartedAt,
+                videoTaskId: taskIds.pollId,
+                videoTaskVideoId: taskIds.providerId || node.metadata?.videoTaskVideoId,
             },
         };
     });

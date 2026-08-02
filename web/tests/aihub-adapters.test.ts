@@ -13,7 +13,7 @@ registerHooks({
 });
 
 const { createAIHubImageEditForm, createAIHubImageGenerationBody } = await import("../src/services/api/aihub/image.ts");
-const { aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } = await import("../src/services/api/aihub/video.ts");
+const { aiHubTaskContentId, aiHubTaskContentIds, aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } = await import("../src/services/api/aihub/video.ts");
 
 test("AIHub 默认模型完整且不重复", () => {
     assert.equal(AIHUB_DEFAULT_MODELS.length, 28);
@@ -70,7 +70,11 @@ test("Omni 单图字段和相对任务地址正确", () => {
         image_url: "data:image/png;base64,AA==",
     });
     assert.equal(resolveAIHubTaskResultUrl("/v1/videos/task/content", (path) => `/api/v1${path}`), "/api/v1/videos/task/content");
-    assert.equal(resolveAIHubTaskResultUrl("/v1/videos/vid-internal/content", (path) => `/api/v1${path}`, "task-public"), "/api/v1/videos/task-public/content");
+    assert.equal(resolveAIHubTaskResultUrl("/v1/videos/vid-internal/content", (path) => `/api/v1${path}`, "task-public"), "/api/v1/videos/vid-internal/content");
+    assert.equal(resolveAIHubTaskResultUrl("https://download.example.com/v1/videos/vid-result/content", (path) => `/api/v1${path}`, "task-public"), "/api/v1/videos/vid-result/content");
+    assert.equal(aiHubTaskContentId("/v1/videos/vid-result/content"), "vid-result");
+    assert.equal(aiHubTaskContentId("https://cdn.example.com/result.mp4"), "");
+    assert.deepEqual(aiHubTaskContentIds("/v1/videos/vid-result/content", "task-public"), ["task-public", "vid-result"]);
     assert.equal(aiHubTaskContentProxyUrl("task/a b"), "/api/aihub/video-content?taskId=task%2Fa%20b");
     const publicImage = createAIHubVideoBody({
         model: "omni-fast",

@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
-import { aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } from "@/services/api/aihub/video";
+import { aiHubTaskContentId, aiHubTaskContentIds, aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody } from "@/services/api/aihub/video";
 import { classifyVideoPollingFailure, selectVideoPollId } from "@/services/api/video-polling";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { isKIEGrokVideoModel } from "@/components/video-settings-panel";
@@ -195,15 +195,16 @@ export async function pollCreatedVideoGenerationTask(
     }
 }
 
-export async function pollVideoGenerationTaskStatus(config: AiConfig, task: VideoResponse) {
+export async function pollVideoGenerationTaskStatus(config: AiConfig, task: VideoResponse, onStatus?: (task: VideoResponse) => void) {
     const model = config.model || config.videoModel;
     const pollId = videoPollId(model, task);
     if (!pollId) throw new VideoRequestError("视频接口没有返回任务 ID", task);
     try {
-        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data);
+        let video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data);
         if (isAIHubConfig(config) && isFailedVideoStatus(video.status) && video.error?.message) {
-            return { ...video, error: { ...video.error, message: aiHubVideoFailureMessage(model, video.error.message) } };
+            video = { ...video, error: { ...video.error, message: aiHubVideoFailureMessage(model, video.error.message) } };
         }
+        onStatus?.(video);
         return isCompletedVideoStatus(video.status) || video.video_url || video.url ? materializeAIHubVideoTask(config, video, pollId) : video;
     } catch (error) {
         throw toVideoPollingError(error);
@@ -213,16 +214,30 @@ export async function pollVideoGenerationTaskStatus(config: AiConfig, task: Vide
 async function materializeAIHubVideoTask(config: AiConfig, task: VideoResponse, pollId: string) {
     if (!isAIHubConfig(config)) return task;
     const rawUrl = task.video_url || task.url || "";
-    if (!rawUrl || /^(?:https?:|blob:|data:)/i.test(rawUrl)) return task;
-    const downloadUrl = usesAccountProxy(config)
-        ? resolveAIHubTaskResultUrl(rawUrl, (path) => aiApiUrl(config, path), pollId)
-        : aiHubTaskContentProxyUrl(pollId);
-    const response = await fetch(downloadUrl, { headers: aiHeaders(config) });
-    if (!response.ok) throw new VideoRequestError(`视频结果下载失败：${response.status}`, { task, downloadPath: `/videos/${pollId}/content` }, { retryable: response.status === 408 || response.status === 429 || response.status >= 500 });
+    if (!rawUrl || /^(?:blob:|data:)/i.test(rawUrl)) return task;
+    const contentId = aiHubTaskContentId(rawUrl);
+    if (/^https?:/i.test(rawUrl) && !contentId) return task;
+    const resultIds = aiHubTaskContentIds(rawUrl, pollId);
+    let response = await fetchAIHubVideoContent(config, resultIds[0]);
+    if (!response.ok && resultIds[1] && shouldFallbackVideoContent(response.status)) {
+        response = await fetchAIHubVideoContent(config, resultIds[1]);
+    }
+    if (!response.ok) throw new VideoRequestError(`视频结果下载失败：${response.status}`, { task, downloadPath: `/videos/${pollId}/content` }, { retryable: shouldFallbackVideoContent(response.status) });
     const blob = await response.blob();
     if (!blob.size || (!blob.type.startsWith("video/") && !blob.type.startsWith("image/"))) throw new VideoRequestError("视频结果接口没有返回媒体文件", { task, contentType: blob.type, bytes: blob.size });
     const stored = await uploadMediaFile(blob, blob.type.startsWith("image/") ? "image" : "video");
     return { ...task, video_url: stored.url, url: stored.url, storageKey: stored.storageKey, storage_key: stored.storageKey, bytes: stored.bytes, mimeType: stored.mimeType, mime_type: stored.mimeType };
+}
+
+function fetchAIHubVideoContent(config: AiConfig, taskId: string) {
+    const downloadUrl = usesAccountProxy(config)
+        ? aiApiUrl(config, `/videos/${encodeURIComponent(taskId)}/content`)
+        : aiHubTaskContentProxyUrl(taskId);
+    return fetch(downloadUrl, { headers: aiHeaders(config) });
+}
+
+function shouldFallbackVideoContent(status: number) {
+    return status === 404 || status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
 }
 
 export async function listVideoGenerationTasks(config: AiConfig) {

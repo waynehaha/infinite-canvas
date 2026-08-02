@@ -194,14 +194,39 @@ function appendOmniVideos(body: FormData, values: AIHubMediaValue[]) {
 }
 
 export function resolveAIHubTaskResultUrl(value: string, resolveApiPath: (path: string) => string, taskId = "") {
-    if (/^https?:\/\//i.test(value)) return value;
     const normalized = value.trim();
     if (!normalized) return "";
-    if (taskId && /^\/?v1\/videos\/[^/]+\/content(?:\?|$)/i.test(normalized)) {
-        return resolveApiPath(`/videos/${encodeURIComponent(taskId)}/content`);
-    }
+    const contentId = aiHubTaskContentId(normalized);
+    if (contentId) return resolveApiPath(`/videos/${encodeURIComponent(contentId)}/content`);
+    if (taskId && /^[A-Za-z0-9_-]{1,160}$/.test(taskId) && /^\/?v1\/videos\//i.test(normalized)) return resolveApiPath(`/videos/${encodeURIComponent(taskId)}/content`);
+    if (/^https?:\/\//i.test(normalized)) return normalized;
     const apiPath = normalized.replace(/^\/v1(?=\/)/, "");
     return resolveApiPath(apiPath.startsWith("/") ? apiPath : `/${apiPath}`);
+}
+
+export function aiHubTaskContentIds(value: string, fallbackId: string) {
+    return Array.from(new Set([/^[A-Za-z0-9_-]{1,160}$/.test(fallbackId) ? fallbackId : "", aiHubTaskContentId(value)].filter(Boolean)));
+}
+
+export function aiHubTaskContentId(value: string) {
+    const normalized = value.trim();
+    if (!normalized) return "";
+    let pathname = normalized;
+    if (/^https?:\/\//i.test(normalized)) {
+        try {
+            pathname = new URL(normalized).pathname;
+        } catch {
+            return "";
+        }
+    }
+    const match = pathname.match(/^\/?v1\/videos\/([^/?#]+)\/content(?:\/|$)/i);
+    if (!match) return "";
+    try {
+        const id = decodeURIComponent(match[1]);
+        return /^[A-Za-z0-9_-]{1,160}$/.test(id) ? id : "";
+    } catch {
+        return "";
+    }
 }
 
 export function aiHubTaskContentProxyUrl(taskId: string) {
