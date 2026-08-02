@@ -167,6 +167,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
 }
 
 function AIHubImageSettingsPanel({ capability, config, onConfigChange, theme, showTitle, showSize, showCount, className }: { capability: AIHubImageCapability; config: AiConfig; onConfigChange: ImageSettingsPanelProps["onConfigChange"]; theme: CanvasTheme; showTitle: boolean; showSize: boolean; showCount: boolean; className: string }) {
+    const hidden = new Set(capability.hidden);
     const quality = capability.quality ? normalizeAIHubSelectValue(capability.quality, config.quality) : "";
     const size = capability.size ? normalizeAIHubSelectValue(capability.size, config.size) : "";
     const count = capability.count ? normalizeAIHubRangeValue(capability.count, config.count) : 1;
@@ -174,7 +175,7 @@ function AIHubImageSettingsPanel({ capability, config, onConfigChange, theme, sh
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">图像设置</div> : null}
-                {capability.quality ? (
+                {capability.quality && !hidden.has("质量") ? (
                     <div className="space-y-2.5">
                         <SettingTitle color={theme.node.muted}>质量</SettingTitle>
                         <div className="grid grid-cols-4 gap-2.5">
@@ -182,7 +183,7 @@ function AIHubImageSettingsPanel({ capability, config, onConfigChange, theme, sh
                         </div>
                     </div>
                 ) : null}
-                {showSize && capability.size ? (
+                {showSize && capability.size && !hidden.has("尺寸") ? (
                     <div className="space-y-2.5">
                         <SettingTitle color={theme.node.muted}>宽高比</SettingTitle>
                         <div className="grid grid-cols-4 gap-2.5">
@@ -190,7 +191,7 @@ function AIHubImageSettingsPanel({ capability, config, onConfigChange, theme, sh
                         </div>
                     </div>
                 ) : null}
-                {showCount && capability.count && capability.count.max > 1 ? (
+                {showCount && capability.count && capability.count.max > 1 && !hidden.has("生成张数") ? (
                     <div className="space-y-2.5">
                         <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
                         <div className="grid grid-cols-4 gap-2.5">
@@ -199,7 +200,7 @@ function AIHubImageSettingsPanel({ capability, config, onConfigChange, theme, sh
                     </div>
                 ) : null}
                 <CapabilityNotes items={capability.fixedSummary} theme={theme} />
-                {capability.references?.images ? <div className="text-[11px] leading-5" style={{ color: theme.node.muted }}>参考图最多 {capability.references.images.max} 张{capability.references.images.note ? `，${capability.references.images.note}` : ""}</div> : null}
+                {capability.references?.images && !hidden.has("参考图") ? <div className="text-[11px] leading-5" style={{ color: theme.node.muted }}>参考图最多 {capability.references.images.max} 张{capability.references.images.note ? `，${capability.references.images.note}` : ""}</div> : null}
             </div>
         </ImageSettingsTheme>
     );

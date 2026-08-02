@@ -153,6 +153,7 @@ export function VideoSettingsPanel({ config, modelName, onConfigChange, theme, s
 }
 
 function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, showTitle, className, visualOnly }: { capability: AIHubVideoCapability; config: AiConfig; onConfigChange: VideoSettingsPanelProps["onConfigChange"]; theme: CanvasTheme; showTitle: boolean; className: string; visualOnly: boolean }) {
+    const hidden = new Set(capability.hidden);
     const ratio = capability.aspectRatio ? normalizeAIHubSelectValue(capability.aspectRatio, config.size) : "";
     const duration = capability.duration?.mode === "select" ? normalizeAIHubSelectValue(capability.duration, config.videoSeconds) : capability.duration?.mode === "range" ? normalizeAIHubRangeValue(capability.duration, config.videoSeconds) : capability.duration?.value;
 
@@ -175,14 +176,14 @@ function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, sh
     }, [capability, config.size, config.videoSeconds, config.vquality, onConfigChange]);
 
     const referenceSummary = [
-        capability.references?.images ? `参考图最多 ${capability.references.images.max} 张` : "",
-        capability.references?.videos
+        capability.references?.images && !hidden.has("参考图") ? `参考图最多 ${capability.references.images.max} 张` : "",
+        capability.references?.videos && !hidden.has("参考视频")
             ? capability.references.videos.required === capability.references.videos.max
                 ? `需要 ${capability.references.videos.max} 个参考视频`
                 : `参考视频 ${capability.references.videos.required ? `${capability.references.videos.required}–` : "最多 "}${capability.references.videos.max} 个`
             : "",
-        capability.references?.audios ? `参考音频最多 ${capability.references.audios.max} 个` : "",
-        capability.references?.frames ? "支持成对首尾帧" : "",
+        capability.references?.audios && !hidden.has("参考音频") ? `参考音频最多 ${capability.references.audios.max} 个` : "",
+        capability.references?.frames && !hidden.has("首尾帧") ? "支持成对首尾帧" : "",
     ].filter(Boolean);
 
     return (
@@ -192,7 +193,7 @@ function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, sh
                 <div className="flex flex-wrap gap-x-3 gap-y-1 rounded-xl border px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, background: theme.node.fill, color: theme.node.muted }}>
                     {capability.fixedSummary.map((item) => <span key={item}>{item}</span>)}
                 </div>
-                {capability.aspectRatio ? (
+                {capability.aspectRatio && !hidden.has("尺寸") && !hidden.has("宽高比") ? (
                     <SettingGroup title={capability.model.startsWith("grok-") ? "尺寸" : "画幅比例"} color={theme.node.muted}>
                         <div className="grid grid-cols-3 gap-2.5">
                             {capability.aspectRatio.options.map((item) => {
@@ -208,12 +209,12 @@ function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, sh
                         </div>
                     </SettingGroup>
                 ) : null}
-                {!visualOnly && capability.duration?.mode === "select" ? (
+                {!visualOnly && capability.duration?.mode === "select" && !hidden.has("时长") ? (
                     <SettingGroup title="时长" color={theme.node.muted}>
                         <div className="grid grid-cols-3 gap-2.5">{capability.duration.options.map((item) => <OptionPill key={item.value} selected={duration === item.value} theme={theme} onClick={() => onConfigChange("videoSeconds", item.value)}>{item.label}</OptionPill>)}</div>
                     </SettingGroup>
                 ) : null}
-                {!visualOnly && capability.duration?.mode === "range" ? (
+                {!visualOnly && capability.duration?.mode === "range" && !hidden.has("时长") ? (
                     <SettingGroup title="时长" color={theme.node.muted}>
                         <div className="grid grid-cols-4 gap-2.5">{(capability.duration.quick || []).map((value) => <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>{value}s</OptionPill>)}</div>
                         <NumberInput value={String(duration)} min={capability.duration.min} max={capability.duration.max} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />

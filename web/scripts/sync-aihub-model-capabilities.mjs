@@ -102,10 +102,19 @@ function referenceText(item) {
         const limit = item.references[key];
         if (!limit) continue;
         const required = limit.required ? `${limit.required}–` : "最多 ";
-        const size = limit.maxBytes ? `，单个 ≤${Math.floor(limit.maxBytes / 1024 / 1024)}MB` : limit.maxTotalBytes ? `，合计 ≤${Math.floor(limit.maxTotalBytes / 1024 / 1024)}MB` : "";
-        values.push(`${label}${required}${limit.max}${size}`);
+        const details = [];
+        if (limit.maxBytes) details.push(`单个 ≤${Math.floor(limit.maxBytes / 1024 / 1024)}MB`);
+        if (limit.maxTotalBytes) details.push(`合计 ≤${Math.floor(limit.maxTotalBytes / 1024 / 1024)}MB`);
+        if (limit.minWidth || limit.minHeight) details.push(`最小 ${limit.minWidth || "—"}×${limit.minHeight || "—"}px`);
+        if (limit.maxWidth || limit.maxHeight) details.push(`最大 ${limit.maxWidth || "—"}×${limit.maxHeight || "—"}px`);
+        if (limit.maxLongEdge) details.push(`长边 ≤${limit.maxLongEdge}px`);
+        if (limit.minDurationMs || limit.maxDurationMs) details.push(`单条 ${limit.minDurationMs ? limit.minDurationMs / 1000 : 0}–${limit.maxDurationMs ? limit.maxDurationMs / 1000 : "—"} 秒`);
+        if (limit.maxTotalDurationMs) details.push(`总时长 ≤${limit.maxTotalDurationMs / 1000} 秒`);
+        if (limit.localOnly) details.push("仅限本地上传");
+        if (limit.note) details.push(limit.note);
+        values.push(`${label}${required}${limit.max}${details.length ? `，${details.join("，")}` : ""}`);
     }
-    if (item.references.frames) values.push("首尾帧必须成对");
+    if (item.references.frames?.mode === "pair") values.push(`首尾帧必须成对${item.references.frames.exclusive ? "，且不能混用其他参考素材" : ""}`);
     return values.length ? values.join("<br>") : "—";
 }
 

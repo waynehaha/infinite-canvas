@@ -1,6 +1,6 @@
 {
     "name": "infinite-canvas",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "private": true,
     "type": "module",
     "scripts": {
@@ -8,6 +8,8 @@
         "build": "next build",
         "start": "next start",
         "test": "node --test tests/*.test.ts",
+        "test:aihub": "node --test tests/aihub-*.test.ts tests/video-polling.test.ts",
+        "test:aihub:live": "node scripts/run-aihub-live-smoke.mjs",
         "capabilities:sync": "node scripts/sync-aihub-model-capabilities.mjs --write",
         "capabilities:check": "node scripts/sync-aihub-model-capabilities.mjs",
         "format": "prettier --write .",

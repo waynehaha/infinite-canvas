@@ -1,24 +1,27 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings2, Video } from "lucide-react";
+import { CircleAlert, Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings2, Video } from "lucide-react";
 import { Button, Segmented } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { getAIHubImageCapability, normalizeAIHubRangeValue } from "@/lib/aihub-model-capabilities";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasCameraControl } from "./canvas-camera-control";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasVideoSettingsPopover, type CanvasVideoFrameOption, type CanvasVideoResourceOption } from "./canvas-video-settings-popover";
+import type { NodeGenerationInput } from "./canvas-node-generation";
 import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from "../types";
+import { buildCanvasImageReferencePolicy, buildCanvasVideoReferencePolicy } from "../utils/canvas-generation-reference-policy";
 
 type CanvasConfigNodePanelProps = {
     node: CanvasNodeData;
     isRunning: boolean;
-    inputSummary: { textCount: number; imageCount: number; videoCount: number; audioCount: number };
+    inputs: NodeGenerationInput[];
     videoFrameOptions?: CanvasVideoFrameOption[];
     videoResourceOptions?: CanvasVideoResourceOption[];
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
@@ -26,19 +29,31 @@ type CanvasConfigNodePanelProps = {
     onComposerToggle: () => void;
 };
 
-export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoFrameOptions = [], videoResourceOptions = [], onConfigChange, onGenerate, onComposerToggle }: CanvasConfigNodePanelProps) {
+export function CanvasConfigNodePanel({ node, isRunning, inputs, videoFrameOptions = [], videoResourceOptions = [], onConfigChange, onGenerate, onComposerToggle }: CanvasConfigNodePanelProps) {
     const globalConfig = useEffectiveConfig();
     const modelCosts = useConfigStore((state) => state.publicSettings?.modelChannel.modelCosts);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = node.metadata?.generationMode || "image";
     const config = buildNodeConfig(globalConfig, node, mode);
-    const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const referencePolicy = mode === "video"
+        ? buildCanvasVideoReferencePolicy(config.model, inputs, node.metadata?.composerContent ?? "", { firstFrameNodeId: node.metadata?.firstFrameNodeId, lastFrameNodeId: node.metadata?.lastFrameNodeId })
+        : mode === "image"
+          ? buildCanvasImageReferencePolicy(config.model, inputs, node.metadata?.composerContent ?? "")
+          : null;
+    const inputSummary = referencePolicy?.connectedSummary || {
+        textCount: inputs.filter((input) => input.type === "text").length,
+        imageCount: inputs.filter((input) => input.type === "image").length,
+        videoCount: inputs.filter((input) => input.type === "video").length,
+        audioCount: inputs.filter((input) => input.type === "audio").length,
+    };
+    const imageCapability = mode === "image" ? getAIHubImageCapability(config.model) : undefined;
+    const count = imageCapability?.count ? normalizeAIHubRangeValue(imageCapability.count, config.count) : Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const credits = requestCreditCost({ channelMode: config.channelMode, modelCosts, model: config.model, count: mode === "image" ? count : 1 });
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
-    const canGenerate = hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
+    const canGenerate = (hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput)) && !referencePolicy?.error;
 
     return (
         <div className="flex h-full w-full cursor-move flex-col px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
@@ -94,14 +109,21 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoFram
 
             <div className="mb-2 flex flex-wrap gap-1.5">
                 <InputChip label="提示词" value={`${inputSummary.textCount} 个`} style={chipStyle} />
-                <InputChip label="参考图" value={`${inputSummary.imageCount} 张`} style={chipStyle} />
-                <InputChip label="参考视频" value={`${inputSummary.videoCount} 个`} style={chipStyle} />
-                <InputChip label="参考音频" value={`${inputSummary.audioCount} 个`} style={chipStyle} />
+                <InputChip label="参考图" value={`${inputSummary.imageCount} 张`} style={chipStyle} unsupported={referencePolicy?.unsupportedConnectedTypes.has("image")} />
+                <InputChip label="参考视频" value={`${inputSummary.videoCount} 个`} style={chipStyle} unsupported={referencePolicy?.unsupportedConnectedTypes.has("video")} />
+                <InputChip label="参考音频" value={`${inputSummary.audioCount} 个`} style={chipStyle} unsupported={referencePolicy?.unsupportedConnectedTypes.has("audio")} />
                 <button type="button" className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md border px-2 text-[11px]" style={chipStyle} onMouseDown={(event) => event.stopPropagation()} onClick={onComposerToggle}>
                     <Settings2 className="size-3.5" />
                     组装提示词
                 </button>
             </div>
+
+            {referencePolicy?.error ? (
+                <div role="alert" className="mb-2 flex min-w-0 items-center gap-1.5 text-[11px] leading-4" style={{ color: theme.node.muted }} title={referencePolicy.error}>
+                    <CircleAlert className="size-3.5 shrink-0" />
+                    <span className="truncate">{referencePolicy.error}</span>
+                </div>
+            ) : null}
 
             <div className={`mb-2 grid min-w-0 cursor-default items-center gap-2 ${mode === "image" || mode === "video" ? "grid-cols-[minmax(0,1fr)_148px_92px]" : mode === "audio" ? "grid-cols-[minmax(0,1fr)_148px]" : "grid-cols-1"}`} onMouseDown={(event) => event.stopPropagation()}>
                 <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} channelId={modelChannelId(config, mode)} onChange={(model, channelId) => onConfigChange(node.id, { model, channelId })} capability={mode} onMissingConfig={() => openConfigDialog(true)} fullWidth />
@@ -137,9 +159,10 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, videoFram
     );
 }
 
-function InputChip({ label, value, style }: { label: string; value: string; style: CSSProperties }) {
+function InputChip({ label, value, style, unsupported = false }: { label: string; value: string; style: CSSProperties; unsupported?: boolean }) {
     return (
-        <div className="inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[11px]" style={style}>
+        <div className="inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[11px]" style={{ ...style, borderStyle: unsupported ? "dashed" : undefined, opacity: unsupported ? 0.58 : 1 }} title={unsupported ? "当前模型不支持这类参考素材" : undefined}>
+            {unsupported ? <CircleAlert className="size-3 shrink-0" /> : null}
             <span>{label}</span>
             <span className="font-medium">{value}</span>
         </div>

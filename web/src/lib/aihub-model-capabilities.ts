@@ -33,8 +33,22 @@ export type AIHubMediaCapability = {
     max: number;
     maxBytes?: number;
     maxTotalBytes?: number;
+    minWidth?: number;
+    minHeight?: number;
+    maxWidth?: number;
+    maxHeight?: number;
+    maxLongEdge?: number;
+    minDurationMs?: number;
+    maxDurationMs?: number;
+    maxTotalDurationMs?: number;
+    localOnly?: boolean;
     required?: number;
     note?: string;
+};
+
+export type AIHubFrameCapability = {
+    mode: "pair";
+    exclusive?: boolean;
 };
 
 type AIHubCapabilityBase = {
@@ -57,6 +71,8 @@ export type AIHubImageCapability = AIHubCapabilityBase & {
 
 export type AIHubVideoCapability = AIHubCapabilityBase & {
     kind: "video";
+    promptRequired?: boolean;
+    promptFallback?: string;
     aspectRatio?: AIHubSelectCapability;
     duration?: AIHubSelectCapability | AIHubRangeCapability | AIHubFixedCapability;
     resolution?: AIHubFixedCapability;
@@ -64,8 +80,9 @@ export type AIHubVideoCapability = AIHubCapabilityBase & {
         images?: AIHubMediaCapability;
         videos?: AIHubMediaCapability;
         audios?: AIHubMediaCapability;
-        frames?: "pair";
+        frames?: AIHubFrameCapability;
     };
+    requiresImageWith?: readonly ("videos" | "audios")[];
 };
 
 export type AIHubAudioCapability = AIHubCapabilityBase & {
@@ -232,14 +249,14 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
     ...(["omni-fast", "omni-fast-no-water"] as const).map((model) => ({
         ...omniBase,
         model,
-        references: { images: { max: 5, maxBytes: 8 * 1024 * 1024, note: "每张不超过 8MB" }, frames: "pair" as const },
+        references: { images: { max: 5, maxBytes: 8 * 1024 * 1024, note: "每张不超过 8MB" }, frames: { mode: "pair" as const } },
     })),
     ...(["omni-fast-v2v", "omni-fast-v2v-no-water"] as const).map((model) => ({
         ...omniBase,
         model,
         fixedSummary: [...omniBase.fixedSummary, "需要 1–2 个参考视频"],
         hidden: [...omniBase.hidden, "参考图", "首尾帧", "参考音频"],
-        references: { videos: { min: 1, max: 2, maxBytes: 8 * 1024 * 1024, required: 1, note: "每个不超过 8MB、1920×1080" } as AIHubMediaCapability },
+        references: { videos: { min: 1, max: 2, maxBytes: 8 * 1024 * 1024, maxWidth: 1920, maxHeight: 1080, required: 1, note: "每个不超过 8MB、1920×1080" } as AIHubMediaCapability },
     })),
     ...seedanceModels.map((model) => ({
         kind: "video" as const,
@@ -254,11 +271,12 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
         duration: { mode: "range" as const, default: 5, min: 4, max: 15, step: 1, unit: "秒", quick: [4, 5, 6, 8, 10, 12, 15] },
         resolution: { mode: "fixed" as const, value: model.toLowerCase().endsWith("480p") ? "480p" : "720p", label: model.toLowerCase().endsWith("480p") ? "480p" : "720p" },
         references: {
-            images: { max: 9 },
-            videos: { max: 3, maxBytes: 50 * 1024 * 1024, note: "2–15 秒" },
+            images: { max: 9, maxBytes: 30 * 1024 * 1024, minWidth: 300, minHeight: 300, maxLongEdge: 4000, note: "JPEG/PNG/WEBP，每边至少 300px、长边不超过 4000px" },
+            videos: { max: 3, maxBytes: 50 * 1024 * 1024, minDurationMs: 2_000, maxDurationMs: 15_000, maxTotalDurationMs: 15_000, note: "mp4/mov，单条 2–15 秒，多条总时长不超过 15 秒" },
             audios: { max: 3, note: "使用视频或音频参考时必须同时提供至少 1 张主图" },
-            frames: "pair" as const,
+            frames: { mode: "pair" as const, exclusive: true },
         },
+        requiresImageWith: ["videos", "audios"] as const,
     })),
     {
         kind: "video",
@@ -268,8 +286,10 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
         source,
         endpoint: "/videos",
         fixedSummary: ["只处理一个本地视频文件", "提示词可留空，默认 remove watermark"],
+        promptRequired: false,
+        promptFallback: "remove watermark",
         hidden: ["清晰度", "尺寸", "宽高比", "时长", "生成音频", "水印", "参考图", "参考音频"],
-        references: { videos: { max: 1, maxBytes: 20 * 1024 * 1024, required: 1, note: "必须是本地视频文件" } },
+        references: { videos: { max: 1, maxBytes: 20 * 1024 * 1024, required: 1, localOnly: true, note: "必须是本地视频文件" } },
     },
     ...(["grok-imagine-video", "grok-imagine-video-1.5-preview"] as const).map((model) => ({
         kind: "video" as const,

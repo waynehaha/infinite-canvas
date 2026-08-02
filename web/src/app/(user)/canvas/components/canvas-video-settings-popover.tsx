@@ -102,7 +102,7 @@ function VideoSettingsPortal({ buttonRect, panelRef, placement, theme, config, o
     const isKIEKlingV3 = isKIEKlingV3Config(config, model);
     const isKlingMotionControl = isAPIMartKlingMotionControlConfig(config, model) || isKIEKlingMotionControlConfig(config, model);
     const isKlingV3 = isAPIMartKlingV3 || isKIEKlingV3;
-    const frameReferencesEnabled = !isKlingV3 && (capability?.references?.frames === "pair" || supportsVideoFrameReferences(model));
+    const frameReferencesEnabled = !isKlingV3 && (capability ? Boolean(capability.references?.frames) : supportsVideoFrameReferences(model));
     const optionIds = useMemo(() => new Set(frameOptions.map((item) => item.nodeId)), [frameOptions]);
     const firstFrameValue = firstFrameNodeId && optionIds.has(firstFrameNodeId) ? firstFrameNodeId : "";
     const lastFrameValue = lastFrameNodeId && optionIds.has(lastFrameNodeId) ? lastFrameNodeId : "";

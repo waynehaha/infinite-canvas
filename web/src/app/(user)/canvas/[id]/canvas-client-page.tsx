@@ -17,6 +17,7 @@ import { collectImageStorageKeys, deleteStoredImages, resolveImageUrl, uploadIma
 import { resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
+import { getAIHubImageCapability, normalizeAIHubRangeValue } from "@/lib/aihub-model-capabilities";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { isKIEKlingV3Config } from "@/components/video-settings-panel";
@@ -28,7 +29,7 @@ import { PANORAMA_IMAGE_SIZE, PANORAMA_NODE_SIZE, buildPanoramaPrompt, isCanvasI
 import { applyCameraPrompt } from "../utils/canvas-camera";
 import { GROUP_PADDING, findContainingGroupId, findGroupDropTarget, getNodeBounds, snapNodesIntoGroup } from "../utils/canvas-group";
 import { App, Button, Dropdown, Modal } from "antd";
-import { modelKey, supportsVideoAudioGeneration, supportsVideoFrameReferences } from "@/lib/video-model-capabilities";
+import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
 import { CanvasConfigComposer } from "../components/canvas-config-composer";
@@ -53,6 +54,7 @@ import { CanvasToolbar } from "../components/canvas-toolbar";
 import { AssetPickerModal, type AssetPickerTab } from "../components/asset-picker-modal";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { CANVAS_ASSET_DRAG_TYPE, CanvasSidePanel } from "../components/canvas-side-panel";
+import { resolveCanvasVideoImageReferences } from "../utils/canvas-generation-reference-policy";
 import { DEFAULT_CANVAS_AGENT_PANEL, DEFAULT_CANVAS_SIDE_PANEL, useCanvasStore } from "../stores/use-canvas-store";
 import { buildCanvasResourceReferences, buildNodeMentionReferences } from "../utils/canvas-resource-references";
 import { buildCanvasAgentContext } from "../agent/canvas-agent-context";
@@ -2809,10 +2811,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
 
                 if (mode === "video") {
                     const videoGenerationConfig = withCanvasVideoAdvancedConfig(generationConfig, generationContext);
-                    const frameReferencesEnabled = supportsVideoFrameReferences(videoGenerationConfig.model);
-                    const firstFrame = frameReferencesEnabled ? generationContext.firstFrame : null;
-                    const lastFrame = frameReferencesEnabled ? generationContext.lastFrame : null;
-                    const videoReferenceImages = frameReferencesEnabled ? generationContext.referenceImages : [...generationContext.referenceImages, ...[generationContext.firstFrame, generationContext.lastFrame].filter((image): image is ReferenceImage => Boolean(image))];
+                    const { references: videoReferenceImages, firstFrame, lastFrame } = resolveCanvasVideoImageReferences(
+                        videoGenerationConfig.model,
+                        generationContext.referenceImages,
+                        generationContext.firstFrame,
+                        generationContext.lastFrame,
+                    );
                     const spec = nodeSizeFromRatio(videoGenerationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                     const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
                     const videoId = isEmptyVideoNode ? nodeId : nanoid();
@@ -3386,10 +3390,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 }
                 if (node.type === CanvasNodeType.Video) {
                     const videoGenerationConfig = context ? withCanvasVideoAdvancedConfig(generationConfig, context) : generationConfig;
-                    const frameReferencesEnabled = supportsVideoFrameReferences(videoGenerationConfig.model);
-                    const firstFrame = frameReferencesEnabled ? context?.firstFrame || null : null;
-                    const lastFrame = frameReferencesEnabled ? context?.lastFrame || null : null;
-                    const references = frameReferencesEnabled ? retryImages : [...retryImages, ...[context?.firstFrame, context?.lastFrame].filter((image): image is ReferenceImage => Boolean(image))];
+                    const { references, firstFrame, lastFrame } = resolveCanvasVideoImageReferences(
+                        videoGenerationConfig.model,
+                        retryImages,
+                        context?.firstFrame,
+                        context?.lastFrame,
+                    );
                     const created = await createVideoGenerationTask(videoGenerationConfig, requestPrompt, { references, firstFrame, lastFrame, videoReferences: context?.referenceVideos || [], audioReferences: context?.referenceAudios || [] }, undefined, { clientTaskId: retryVideoTaskId, source: "canvas", sourceId: node.id });
                     setNodes((prev) => applyCanvasVideoTaskUpdate(prev, node.id, created.task, created.pollId, videoGenerationConfig, retryStartedAt, { width: node.width, height: node.height }));
                     return;
@@ -3711,6 +3717,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                     <CanvasConfigComposer
                                         value={panelNode.metadata?.composerContent ?? panelNode.metadata?.prompt ?? ""}
                                         inputs={configInputsById.get(panelNode.id) || []}
+                                        mode={panelNode.metadata?.generationMode || "image"}
+                                        model={panelNode.metadata?.model || (panelNode.metadata?.generationMode === "video" ? effectiveConfig.videoModel : panelNode.metadata?.generationMode === "audio" ? effectiveConfig.audioModel : panelNode.metadata?.generationMode === "text" ? effectiveConfig.textModel : effectiveConfig.imageModel) || effectiveConfig.model}
                                         onChange={(composerContent) => handleConfigNodeChange(panelNode.id, { composerContent })}
                                         onClose={() => setDialogNodeId(null)}
                                     />
@@ -3738,7 +3746,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                     <CanvasConfigNodePanel
                                         node={contentNode}
                                         isRunning={runningNodeId === contentNode.id}
-                                        inputSummary={getInputSummary(configInputsById.get(contentNode.id) || [])}
+                                        inputs={configInputsById.get(contentNode.id) || []}
                                         videoFrameOptions={videoFrameOptionsByNodeId.get(contentNode.id) || []}
                                         videoResourceOptions={videoResourceOptionsByNodeId.get(contentNode.id) || []}
                                         onConfigChange={handleConfigNodeChange}
@@ -4518,15 +4526,6 @@ function normalizeConnection(firstNodeId: string, secondNodeId: string, nodes: C
     return { fromNodeId: first.id, toNodeId: second.id };
 }
 
-function getInputSummary(inputs: NodeGenerationInput[]) {
-    return {
-        textCount: inputs.filter((input) => input.type === "text").length,
-        imageCount: inputs.filter((input) => input.type === "image").length,
-        videoCount: inputs.filter((input) => input.type === "video").length,
-        audioCount: inputs.filter((input) => input.type === "audio").length,
-    };
-}
-
 function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, task: VideoResponse, pollId: string, config: AiConfig, startedAt: number, fallbackSize: { width: number; height: number }) {
     return nodes.map((node) => {
         if (node.id !== nodeId) return node;
@@ -4761,6 +4760,8 @@ function isCanvasAgentKlingV26(key: string) {
 
 function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
     const defaultModel = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : mode === "audio" ? config.audioModel : config.textModel;
+    const model = node?.metadata?.model || defaultModel || (mode === "audio" ? defaultConfig.audioModel : config.model || defaultConfig.model);
+    const imageCapability = mode === "image" ? getAIHubImageCapability(model) : undefined;
     const channelId = node?.metadata?.channelId || "";
     const imageChannelId = mode === "image" ? channelId || config.imageChannelId : config.imageChannelId;
     const videoChannelId = mode === "video" ? channelId || config.videoChannelId : config.videoChannelId;
@@ -4769,7 +4770,7 @@ function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefine
     const activeChannelId = mode === "image" ? imageChannelId : mode === "video" ? videoChannelId : mode === "text" ? textChannelId : mode === "audio" ? audioChannelId || config.activeChannelId : config.activeChannelId;
     return {
         ...config,
-        model: node?.metadata?.model || defaultModel || (mode === "audio" ? defaultConfig.audioModel : config.model || defaultConfig.model),
+        model,
         activeChannelId,
         imageChannelId,
         videoChannelId,
@@ -4790,7 +4791,9 @@ function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefine
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,
         audioInstructions: node?.metadata?.audioInstructions || config.audioInstructions || defaultConfig.audioInstructions,
-        count: String(node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
+        count: String(imageCapability?.count
+            ? normalizeAIHubRangeValue(imageCapability.count, node?.metadata?.count || config.canvasImageCount || config.count)
+            : node?.metadata?.count || (mode === "image" ? config.canvasImageCount || config.count : config.count) || defaultConfig.count),
     };
 }
 
