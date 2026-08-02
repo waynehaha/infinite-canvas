@@ -80,10 +80,14 @@ test("AIHub 嵌套错误会转换为可读中文", () => {
     assert.equal(aiHubVideoFailureMessage("omni-fast", invalidImages), "多张参考图的参数格式不正确，请重新生成");
     assert.equal(
         aiHubVideoFailureMessage("omni-fast", "I can't generate the video you requested right now due to interests of third-party content providers."),
-        "视频模型拒绝了本次生成。可能是素材或提示词触发了安全限制，请更换素材或简化提示词后重新生成；直接重试通常无效",
+        "本次生成触发了内容安全策略。请更换参考素材或调整提示词后重新生成，直接重试通常无效",
     );
     assert.equal(
         aiHubVideoFailureMessage("omni-fast", "Gemini couldn't generate a video from this prompt. Retrying won't help — please rephrase or simplify the prompt (for realistic real people it will be refused) and try again."),
-        "视频模型拒绝了本次生成。可能是素材或提示词触发了安全限制，请更换素材或简化提示词后重新生成；直接重试通常无效",
+        "本次生成触发了内容安全策略。请更换参考素材或调整提示词后重新生成，直接重试通常无效",
+    );
+    assert.equal(
+        aiHubVideoFailureMessage("omni-fast", "Reference image rejected by content policy because it contains an identifiable real person."),
+        "参考图片触发了内容安全策略，视频模型无法处理。请更换不含可识别真人、知名角色、品牌标志或其他敏感内容的图片后重新生成；直接重试通常无效",
     );
 });

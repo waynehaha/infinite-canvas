@@ -134,8 +134,11 @@ export function aiHubVideoFailureMessage(model: string, message: string) {
     if (/cannot unmarshal string into Go struct field .*images.*\[\]string|invalid request body must be valid json/i.test(normalized)) {
         return "多张参考图的参数格式不正确，请重新生成";
     }
+    if (/(?:bad_reference_image|reference image|image reference|input image|uploaded image)/i.test(normalized) && /protected IP|identifiable real person|third-party content providers|content (?:policy|safety)|safety (?:policy|filter)|refus(?:e|ed|al)/i.test(normalized)) {
+        return "参考图片触发了内容安全策略，视频模型无法处理。请更换不含可识别真人、知名角色、品牌标志或其他敏感内容的图片后重新生成；直接重试通常无效";
+    }
     if (/protected IP|identifiable real person|third-party content providers|I can(?:not|'t) generate (?:the|that) video|Gemini couldn't generate (?:a|the) video/i.test(normalized)) {
-        return "视频模型拒绝了本次生成。可能是素材或提示词触发了安全限制，请更换素材或简化提示词后重新生成；直接重试通常无效";
+        return "本次生成触发了内容安全策略。请更换参考素材或调整提示词后重新生成，直接重试通常无效";
     }
     return normalized;
 }
