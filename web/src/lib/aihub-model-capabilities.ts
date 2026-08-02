@@ -131,8 +131,8 @@ const highResolutionRatios = [
 ] as const;
 
 const omniRatios = [
-    { value: "16:9", label: "横屏", detail: "推荐" },
-    { value: "9:16", label: "竖屏", detail: "尽力而为" },
+    { value: "16:9", label: "横屏", detail: "16:9" },
+    { value: "9:16", label: "竖屏", detail: "9:16" },
 ] as const;
 
 const seedanceRatios = [
@@ -229,7 +229,7 @@ const omniBase = {
     verifiedAt,
     source,
     endpoint: "/videos",
-    fixedSummary: ["固定 720p", "当前固定输出约 10 秒"],
+    fixedSummary: ["720p", "约 10 秒"],
     hidden: ["清晰度", "自由时长", "生成音频", "水印"],
     aspectRatio: { mode: "select" as const, default: "16:9", options: omniRatios },
     duration: { mode: "fixed" as const, value: 10, label: "约 10 秒" },

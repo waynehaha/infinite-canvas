@@ -185,24 +185,29 @@ function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, sh
         capability.references?.audios && !hidden.has("参考音频") ? `参考音频最多 ${capability.references.audios.max} 个` : "",
         capability.references?.frames && !hidden.has("首尾帧") ? "支持成对首尾帧" : "",
     ].filter(Boolean);
+    const compactAspectRatio = Boolean(capability.aspectRatio && capability.aspectRatio.options.length <= 2);
 
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
-                <div className="flex flex-wrap gap-x-3 gap-y-1 rounded-xl border px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke, background: theme.node.fill, color: theme.node.muted }}>
-                    {capability.fixedSummary.map((item) => <span key={item}>{item}</span>)}
+                <div className="flex items-center gap-2 text-xs leading-5" style={{ color: theme.node.muted }}>
+                    <span className="font-medium" style={{ color: theme.node.text }}>输出规格</span>
+                    <span>{capability.fixedSummary.join(" · ")}</span>
                 </div>
                 {capability.aspectRatio && !hidden.has("尺寸") && !hidden.has("宽高比") ? (
                     <SettingGroup title={capability.model.startsWith("grok-") ? "尺寸" : "画幅比例"} color={theme.node.muted}>
-                        <div className="grid grid-cols-3 gap-2.5">
+                        <div className={`grid ${compactAspectRatio ? "grid-cols-2 gap-2" : "grid-cols-3 gap-2.5"}`}>
                             {capability.aspectRatio.options.map((item) => {
                                 const preview = capabilityPreview(item.value);
+                                const selected = ratio === item.value;
                                 return (
-                                    <button key={item.value} type="button" className="flex min-h-[68px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80" style={{ borderColor: ratio === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }} onClick={() => onConfigChange("size", item.value)}>
+                                    <button key={item.value} type="button" className={`flex cursor-pointer items-center justify-center border text-sm transition hover:opacity-80 ${compactAspectRatio ? "h-14 flex-row gap-2 rounded-lg px-3" : "min-h-[68px] flex-col gap-1 rounded-xl px-1"}`} style={{ borderColor: theme.node.stroke, background: selected ? theme.toolbar.activeBg : "transparent", color: theme.node.text }} onClick={() => onConfigChange("size", item.value)}>
                                         <SizePreview width={preview.width} height={preview.height} color={theme.node.text} />
-                                        <span>{item.label}</span>
-                                        <span className="text-[10px] leading-none opacity-55">{item.detail || item.value}</span>
+                                        <span className={compactAspectRatio ? "min-w-0 text-left" : "contents"}>
+                                            <span className="block font-medium">{item.label}</span>
+                                            <span className="block text-[10px] leading-none opacity-55">{item.detail || item.value}</span>
+                                        </span>
                                     </button>
                                 );
                             })}
