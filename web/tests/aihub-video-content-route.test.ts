@@ -33,6 +33,7 @@ test("结果代理使用公开任务 ID 和原鉴权下载媒体", async () => {
     assert.equal(url, "https://aihubcc.cc/v1/videos/task_public/content");
     assert.equal((options.headers as Record<string, string>).Authorization, "Bearer key-placeholder");
     assert.equal(options.cache, "no-store");
+    assert.equal(options.signal instanceof AbortSignal, true);
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("content-type"), "video/mp4");
     assert.equal(response.headers.get("content-length"), null);

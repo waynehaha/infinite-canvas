@@ -22,17 +22,19 @@ test("omni-fast 只允许图片参考", () => {
     assert.match(buildCanvasVideoReferencePolicy("omni-fast", [image, video], "").error, /不支持参考视频/);
 });
 
-test("omni-fast-v2v 只允许 1 至 2 个视频参考", () => {
-    assert.equal(isCanvasVideoReferenceInputSupported("omni-fast-v2v", image), false);
+test("omni-fast-v2v 允许可选 1 张图片和必需 1 至 2 个视频", () => {
+    assert.equal(isCanvasVideoReferenceInputSupported("omni-fast-v2v", image), true);
     assert.equal(isCanvasVideoReferenceInputSupported("omni-fast-v2v", video), true);
-    assert.match(buildCanvasVideoReferencePolicy("omni-fast-v2v", [image], "").error, /不支持参考图.*需要至少 1 个参考视频/);
+    assert.match(buildCanvasVideoReferencePolicy("omni-fast-v2v", [image], "").error, /需要至少 1 个参考视频/);
     assert.equal(buildCanvasVideoReferencePolicy("omni-fast-v2v", [video], "").error, "");
+    assert.equal(buildCanvasVideoReferencePolicy("omni-fast-v2v", [image, video], "").error, "");
+    assert.match(buildCanvasVideoReferencePolicy("omni-fast-v2v", [image, { ...image, nodeId: "image-2" }, video], "").error, /参考图最多支持 1 个/);
     assert.match(buildCanvasVideoReferencePolicy("omni-fast-v2v", [video, { ...video, nodeId: "video-2" }, { ...video, nodeId: "video-3" }], "").error, /最多支持 2 个/);
 });
 
 test("omni-fast-v2v 不会把切换模型前残留的首尾帧带入请求", () => {
     const resolved = resolveCanvasVideoImageReferences("omni-fast-v2v", [image.image], image.image, image.image);
-    assert.deepEqual(resolved, { references: [], firstFrame: null, lastFrame: null });
+    assert.deepEqual(resolved, { references: [image.image], firstFrame: null, lastFrame: null });
 
     const omni = resolveCanvasVideoImageReferences("omni-fast", [image.image], image.image, null);
     assert.deepEqual(omni, { references: [image.image], firstFrame: image.image, lastFrame: null });

@@ -254,9 +254,12 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
     ...(["omni-fast-v2v", "omni-fast-v2v-no-water"] as const).map((model) => ({
         ...omniBase,
         model,
-        fixedSummary: [...omniBase.fixedSummary, "需要 1–2 个参考视频"],
-        hidden: [...omniBase.hidden, "参考图", "首尾帧", "参考音频"],
-        references: { videos: { min: 1, max: 2, maxBytes: 8 * 1024 * 1024, maxWidth: 1920, maxHeight: 1080, required: 1, note: "每个不超过 8MB、1920×1080" } as AIHubMediaCapability },
+        fixedSummary: [...omniBase.fixedSummary, "图片+视频混合为实验能力，请避开写实真人、知名角色和品牌素材"],
+        hidden: [...omniBase.hidden, "首尾帧", "参考音频"],
+        references: {
+            images: { max: 1, maxBytes: 8 * 1024 * 1024, note: "可选 1 张，每张不超过 8MB" },
+            videos: { min: 1, max: 2, maxBytes: 8 * 1024 * 1024, maxWidth: 1920, maxHeight: 1080, required: 1, note: "每个不超过 8MB、1920×1080" } as AIHubMediaCapability,
+        },
     })),
     ...seedanceModels.map((model) => ({
         kind: "video" as const,

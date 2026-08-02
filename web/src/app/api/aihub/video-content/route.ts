@@ -4,6 +4,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const AIHUB_API_BASE_URL = "https://aihubcc.cc/v1";
+const AIHUB_RESULT_CONNECT_TIMEOUT_MS = 20_000;
 
 export async function GET(request: NextRequest) {
     const taskId = request.nextUrl.searchParams.get("taskId")?.trim() || "";
@@ -16,6 +17,7 @@ export async function GET(request: NextRequest) {
             headers: { Authorization: authorization, Accept: "video/*,image/*,*/*" },
             cache: "no-store",
             redirect: "follow",
+            signal: AbortSignal.timeout(AIHUB_RESULT_CONNECT_TIMEOUT_MS),
         });
         const headers = new Headers(response.headers);
         headers.delete("content-length");

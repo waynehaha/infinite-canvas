@@ -11,7 +11,7 @@ import { deleteCanvasProjects, deleteCanvasTasks } from "@/services/api/canvas-t
 import { createCanvasImageTask, pollCanvasImageTaskStatus, requestImageQuestion, type CanvasImageTask } from "@/services/api/image";
 import { createCanvasAudioTask, pollCanvasAudioTaskStatus, type CanvasAudioTask } from "@/services/api/audio";
 import { createVideoGenerationTask, pollVideoGenerationTaskStatus, VideoRequestError, VIDEO_POLL_INTERVAL_MS, type VideoResponse } from "@/services/api/video";
-import { resolveVideoTaskIds, selectVideoPollId } from "@/services/api/video-polling";
+import { resolveVideoTaskIds } from "@/services/api/video-polling";
 import { defaultConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { collectImageStorageKeys, deleteStoredImages, resolveImageUrl, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
@@ -4697,7 +4697,7 @@ function canvasVideoTaskFromMetadata(metadata?: CanvasNodeMetadata): VideoRespon
 }
 
 function canvasVideoTaskId(metadata?: CanvasNodeMetadata) {
-    return selectVideoPollId(metadata?.model || "", { id: metadata?.videoTaskId, video_id: metadata?.videoTaskVideoId });
+    return metadata?.videoTaskId?.trim() || "";
 }
 
 function canvasVideoTaskCompleted(task: VideoResponse) {

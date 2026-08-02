@@ -106,12 +106,13 @@ test("图片文件大小和 Veo 提示词要求由能力库统一判断", () => 
 
 test("Omni V2V 必须提供参考视频并使用正确字段", () => {
     assert.throws(() => createAIHubVideoBody(videoInput({ model: "omni-fast-v2v" })), /至少一个参考视频/);
-    const body = createAIHubVideoBody(videoInput({ model: "omni-fast-v2v", videoReferences: ["https://cdn.example.com/a.mp4", "https://cdn.example.com/b.mp4"] }));
+    const body = createAIHubVideoBody(videoInput({ model: "omni-fast-v2v", references: ["https://cdn.example.com/person.png"], videoReferences: ["https://cdn.example.com/a.mp4", "https://cdn.example.com/b.mp4"] }));
     assert.deepEqual(body, {
         model: "omni-fast-v2v",
         prompt: "生成视频",
         seconds: "10",
         aspect_ratio: "16:9",
+        image_url: "https://cdn.example.com/person.png",
         video_url: "https://cdn.example.com/a.mp4",
         videos: ["https://cdn.example.com/a.mp4", "https://cdn.example.com/b.mp4"],
     });

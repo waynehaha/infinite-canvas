@@ -2,7 +2,7 @@ import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { aiHubTaskContentId, aiHubTaskContentIds, aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody } from "@/services/api/aihub/video";
-import { classifyVideoPollingFailure, selectVideoPollId } from "@/services/api/video-polling";
+import { classifyVideoPollingFailure, requestVideoContentCandidates, selectVideoPollId, withVideoResultTimeout } from "@/services/api/video-polling";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { isKIEGrokVideoModel } from "@/components/video-settings-panel";
 import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
@@ -51,6 +51,7 @@ export type CreatedVideoGenerationTask = { task: VideoResponse; pollId: string; 
 export type VideoProgressHandler = (progress: number, task: VideoResponse) => void;
 export type VideoTaskCreateOptions = { clientTaskId?: string; source?: "video-workbench" | "canvas"; sourceId?: string };
 export const VIDEO_POLL_INTERVAL_MS = 5000;
+const VIDEO_RESULT_DOWNLOAD_TIMEOUT_MS = 20_000;
 
 export class VideoRequestError extends Error {
     detail?: string;
@@ -218,12 +219,10 @@ async function materializeAIHubVideoTask(config: AiConfig, task: VideoResponse, 
     const contentId = aiHubTaskContentId(rawUrl);
     if (/^https?:/i.test(rawUrl) && !contentId) return task;
     const resultIds = aiHubTaskContentIds(rawUrl, pollId);
-    let response = await fetchAIHubVideoContent(config, resultIds[0]);
-    if (!response.ok && resultIds[1] && shouldFallbackVideoContent(response.status)) {
-        response = await fetchAIHubVideoContent(config, resultIds[1]);
-    }
+    const result = await requestVideoContentCandidates(resultIds, (id) => fetchAIHubVideoContent(config, id), shouldFallbackVideoContent);
+    const { response, blob } = result;
     if (!response.ok) throw new VideoRequestError(`视频结果下载失败：${response.status}`, { task, downloadPath: `/videos/${pollId}/content` }, { retryable: shouldFallbackVideoContent(response.status) });
-    const blob = await response.blob();
+    if (!blob) throw new VideoRequestError("视频结果接口没有返回媒体文件", task, { retryable: true });
     if (!blob.size || (!blob.type.startsWith("video/") && !blob.type.startsWith("image/"))) throw new VideoRequestError("视频结果接口没有返回媒体文件", { task, contentType: blob.type, bytes: blob.size });
     const stored = await uploadMediaFile(blob, blob.type.startsWith("image/") ? "image" : "video");
     return { ...task, video_url: stored.url, url: stored.url, storageKey: stored.storageKey, storage_key: stored.storageKey, bytes: stored.bytes, mimeType: stored.mimeType, mime_type: stored.mimeType };
@@ -233,7 +232,10 @@ function fetchAIHubVideoContent(config: AiConfig, taskId: string) {
     const downloadUrl = usesAccountProxy(config)
         ? aiApiUrl(config, `/videos/${encodeURIComponent(taskId)}/content`)
         : aiHubTaskContentProxyUrl(taskId);
-    return fetch(downloadUrl, { headers: aiHeaders(config) });
+    return withVideoResultTimeout(VIDEO_RESULT_DOWNLOAD_TIMEOUT_MS, async (signal) => {
+        const response = await fetch(downloadUrl, { headers: aiHeaders(config), signal });
+        return { response, ok: response.ok, status: response.status, blob: response.ok ? await response.blob() : undefined };
+    });
 }
 
 function shouldFallbackVideoContent(status: number) {

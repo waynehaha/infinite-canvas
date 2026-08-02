@@ -54,21 +54,24 @@ test("Omni 单图使用标量字段，多图使用真正的字符串数组", () 
     });
 });
 
-test("Omni V2V 公网视频使用 JSON，本地文件保留 multipart", () => {
+test("Omni V2V 公网图片和视频使用 JSON，本地视频保留 multipart", () => {
+    const image = "https://cdn.example.com/reference.jpg";
     const first = "https://cdn.example.com/first.mp4";
     const second = "https://cdn.example.com/second.mp4";
-    assert.deepEqual(createAIHubVideoBody(videoInput({ model: "omni-fast-v2v", videoReferences: [first, second] })), {
+    assert.deepEqual(createAIHubVideoBody(videoInput({ model: "omni-fast-v2v", references: [image], videoReferences: [first, second] })), {
         model: "omni-fast-v2v",
         prompt: "生成视频",
         seconds: "10",
         aspect_ratio: "16:9",
+        image_url: image,
         video_url: first,
         videos: [first, second],
     });
 
     const file = new File([new Uint8Array([1, 2, 3])], "source.mp4", { type: "video/mp4" });
-    const multipart = createAIHubVideoBody(videoInput({ model: "omni-fast-v2v", videoReferences: [file] }));
+    const multipart = createAIHubVideoBody(videoInput({ model: "omni-fast-v2v", references: [image], videoReferences: [file] }));
     assert.ok(multipart instanceof FormData);
+    assert.equal(multipart.get("image_url"), image);
     assert.equal(multipart.get("input_video"), file);
 });
 

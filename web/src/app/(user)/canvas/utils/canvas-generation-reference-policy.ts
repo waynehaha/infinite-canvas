@@ -78,9 +78,11 @@ export function resolveCanvasVideoImageReferences<T>(model: string, references: 
     const frameReferencesEnabled = capability ? capability.references?.frames?.mode === "pair" : supportsVideoFrameReferences(model);
     const imageReferencesEnabled = capability ? Boolean(capability.references?.images?.max) : true;
     const staleFrames = [firstFrame, lastFrame].filter((reference): reference is T => Boolean(reference));
+    const resolvedReferences = frameReferencesEnabled ? references : [...references, ...staleFrames];
+    const limitedReferences = capability?.references?.images?.max ? resolvedReferences.slice(0, capability.references.images.max) : resolvedReferences;
 
     return {
-        references: imageReferencesEnabled ? (frameReferencesEnabled ? references : [...references, ...staleFrames]) : [],
+        references: imageReferencesEnabled ? limitedReferences : [],
         firstFrame: frameReferencesEnabled ? firstFrame || null : null,
         lastFrame: frameReferencesEnabled ? lastFrame || null : null,
     };

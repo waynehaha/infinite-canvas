@@ -100,13 +100,16 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
         };
         if (model.includes("v2v")) {
             if (!input.videoReferences.length) throw new Error("Omni V2V 需要至少一个参考视频");
+            const references = input.references.slice(0, capability?.references?.images?.max || 0);
             if (input.videoReferences.every((value) => typeof value === "string")) {
+                if (references[0]) values.image_url = references[0];
                 values.video_url = input.videoReferences[0];
                 if (input.videoReferences.length > 1) values.videos = input.videoReferences;
                 return values;
             }
             body.set("seconds", seconds);
             body.set("aspect_ratio", aspectRatio);
+            if (references[0]) body.set("image_url", references[0]);
             appendOmniVideos(body, input.videoReferences.slice(0, capability?.references?.videos?.max || 0));
             return body;
         }
