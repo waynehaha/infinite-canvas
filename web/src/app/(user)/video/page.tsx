@@ -1480,10 +1480,18 @@ function WorkbenchPanel({
                                 </>
                             )}
                             <QuickNumber label="任务" value={String(taskCount)} min={1} max={6} onChange={(value) => onTaskCountChange(normalizeVideoCount(value))} />
-                            {anyReferencesEnabled ? <ReferenceQuickActions imageCount={references.length} videoCount={videoReferences.length} audioCount={audioReferences.length} onPasteReferences={onPasteReferences} onUploadReferences={onUploadReferences} /> : null}
-                            <Button type="primary" className="hidden h-11 min-w-28 items-center justify-center gap-1.5 rounded-xl lg:flex" icon={<Sparkles className="size-4" />} disabled={!canGenerate} onClick={onGenerate}>
-                                {pendingCount ? `${pendingCount} 生成中` : "开始创作"}
-                            </Button>
+                            {anyReferencesEnabled ? (
+                                <div className="grid gap-1">
+                                    <span aria-hidden className="h-4" />
+                                    <ReferenceQuickActions imageCount={references.length} videoCount={videoReferences.length} audioCount={audioReferences.length} onPasteReferences={onPasteReferences} onUploadReferences={onUploadReferences} />
+                                </div>
+                            ) : null}
+                            <div className="grid gap-1">
+                                <span aria-hidden className="h-4" />
+                                <Button type="primary" className="hidden h-11 min-w-28 items-center justify-center gap-1.5 rounded-xl lg:flex" icon={<Sparkles className="size-4" />} disabled={!canGenerate} onClick={onGenerate}>
+                                    {pendingCount ? `${pendingCount} 生成中` : "开始创作"}
+                                </Button>
+                            </div>
                         </div>
                         {firstFrame || lastFrame || references.length || videoReferences.length || audioReferences.length ? (
                             <div className="grid gap-2">
@@ -1744,15 +1752,13 @@ function optionPillClass(active: boolean) {
     ].join(" ");
 }
 
-function QuickSelect({ label, value, options, onChange }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (value: string) => void }) {
+function QuickSelect({ label, value, options, onChange }: { label: string; value: string; options: { value: string; label: string; detail?: string }[]; onChange: (value: string) => void }) {
     return (
         <label className="grid gap-1 text-xs text-stone-500 dark:text-stone-400">
             {label}
             <select className="h-11 min-w-0 rounded-xl border border-stone-200 bg-background px-3 text-sm text-stone-900 outline-none dark:border-stone-800 dark:text-stone-100" value={value} onChange={(event) => onChange(event.target.value)}>
                 {options.map((item) => (
-                    <option key={item.value} value={item.value}>
-                        {item.label}
-                    </option>
+                    <option key={item.value} value={item.value}>{item.detail ? `${item.detail} · ${item.label}` : item.label}</option>
                 ))}
             </select>
         </label>
