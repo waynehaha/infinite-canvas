@@ -6,7 +6,7 @@
 
 | 平台 | 安装包 |
 | --- | --- |
-| Windows 10/11 x64 | `AI-Creative-Workbench-*-Windows-x64-Setup.exe` |
+| Windows 10/11 x64 | `Infinite-Canvas-*-Windows-x64-Setup.exe` |
 | macOS 12 及以上 Apple Silicon | `AI-Creative-Workbench-*-macOS-Apple-Silicon.dmg` |
 
 Windows ARM64、macOS Intel 暂未提供。

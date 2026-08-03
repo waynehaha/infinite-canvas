@@ -29,7 +29,7 @@ SolidCompression=yes
 SetupIconFile={#SourceDir}\app.ico
 UninstallDisplayIcon={app}\app.ico
 OutputDir={#OutputDir}
-OutputBaseFilename=AI-Creative-Workbench-v{#AppVersion}-Windows-x64-Setup
+OutputBaseFilename=Infinite-Canvas-v{#AppVersion}-Windows-x64-Setup
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
