@@ -12,7 +12,7 @@ import { createCanvasImageTask, pollCanvasImageTaskStatus, requestImageQuestion,
 import { createCanvasAudioTask, pollCanvasAudioTaskStatus, type CanvasAudioTask } from "@/services/api/audio";
 import { createVideoGenerationTask, pollVideoGenerationTaskStatus, VideoRequestError, VIDEO_POLL_INTERVAL_MS, type VideoResponse } from "@/services/api/video";
 import { resolveVideoTaskIds } from "@/services/api/video-polling";
-import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, finishDiagnosticTask, startDiagnosticTask, updateDiagnosticReferences, type DiagnosticMode, type DiagnosticReferenceSummary } from "@/services/diagnostic-log";
+import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, finishDiagnosticTask, listDiagnosticTasks, startDiagnosticTask, subscribeDiagnosticTasks, updateDiagnosticReferences, type DiagnosticMode, type DiagnosticReferenceSummary } from "@/services/diagnostic-log";
 import { defaultConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { collectImageStorageKeys, deleteStoredImages, resolveImageUrl, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
@@ -21,6 +21,7 @@ import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { getAIHubImageCapability, normalizeAIHubRangeValue } from "@/lib/aihub-model-capabilities";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
+import { DiagnosticLogModal } from "@/components/layout/diagnostic-log-modal";
 import { isKIEKlingV3Config } from "@/components/video-settings-panel";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -3870,6 +3871,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
+                    canvasId={projectId}
                     title={currentProject?.title || "未命名画布"}
                     sidePanelOpen={sidePanel.open}
                     onToggleSidePanel={() => setSidePanel((current) => ({ ...current, open: !current.open }))}
@@ -4417,6 +4419,7 @@ function FullscreenPreview({ src, alt, isPanorama, proxyGeneratedPanorama = fals
 }
 
 function CanvasTopBar({
+    canvasId,
     title,
     sidePanelOpen,
     onToggleSidePanel,
@@ -4438,6 +4441,7 @@ function CanvasTopBar({
     assistantCollapsed,
     onExpandAssistant,
 }: {
+    canvasId: string;
     title: string;
     sidePanelOpen: boolean;
     onToggleSidePanel: () => void;
@@ -4465,6 +4469,18 @@ function CanvasTopBar({
     const accountRef = useRef<HTMLDivElement>(null);
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const [accountOpen, setAccountOpen] = useState(false);
+    const [diagnosticOpen, setDiagnosticOpen] = useState(false);
+    const [diagnosticAttention, setDiagnosticAttention] = useState(false);
+
+    const refreshDiagnosticAttention = useCallback(async () => {
+        const [latest] = await listDiagnosticTasks(canvasId);
+        setDiagnosticAttention(latest?.status === "failed");
+    }, [canvasId]);
+
+    useEffect(() => {
+        void refreshDiagnosticAttention();
+        return subscribeDiagnosticTasks(() => void refreshDiagnosticAttention());
+    }, [refreshDiagnosticAttention]);
 
     useEffect(() => {
         if (!isTitleEditing) return;
@@ -4543,6 +4559,8 @@ function CanvasTopBar({
                 <div className="pointer-events-auto flex items-center gap-1.5">
                     <UserStatusActions
                         variant="canvas"
+                        onOpenDiagnostics={() => setDiagnosticOpen(true)}
+                        diagnosticAttention={diagnosticAttention}
                         accountOpen={accountOpen}
                         onAccountOpenChange={setAccountOpen}
                         accountRef={accountRef}
@@ -4583,6 +4601,7 @@ function CanvasTopBar({
                     <Shortcut keys={["拖入图片/视频/音频"]} value="上传到画布" />
                 </div>
             </Modal>
+            <DiagnosticLogModal open={diagnosticOpen} canvasId={canvasId} canvasTitle={title} onClose={() => setDiagnosticOpen(false)} />
         </>
     );
 }

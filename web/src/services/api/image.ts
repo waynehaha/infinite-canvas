@@ -2,6 +2,7 @@ import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { isAIHubAsyncImageModel, isAIHubChatImageModel } from "@/lib/aihub-models";
+import { createDiagnosticRequestSnapshot } from "@/lib/diagnostic-log-safety";
 import { createAIHubChatImageBody, createAIHubImageEditForm, createAIHubImageGenerationBody, extractAIHubChatImageUrls } from "@/services/api/aihub/image";
 import { requestVideoGeneration } from "@/services/api/video";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
@@ -564,7 +565,7 @@ function withSystemMessage(config: AiConfig, messages: ChatCompletionMessage[]) 
     return systemPrompt ? [{ role: "system" as const, content: systemPrompt }, ...messages] : messages;
 }
 
-async function requestImageGenerationSingle(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, params: ImageRequestParams): Promise<GeneratedImage[]> {
+async function requestImageGenerationSingle(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, params: ImageRequestParams, diagnosticTaskId?: string): Promise<GeneratedImage[]> {
     const mime = IMAGE_MIME;
 
     // 针对 Agnes 渠道文生图模型定制精简 Payload，避免传入官方文档未声明的 seed 参数。
@@ -600,6 +601,7 @@ async function requestImageGenerationSingle(config: AiConfig & { seedIndex?: num
                 const images = parseImagePayload(payload, mime);
                 return { images, responseBody: stringifyLogPayload(payload) };
             },
+            diagnosticTaskId,
         );
     }
 
@@ -621,6 +623,7 @@ async function requestImageGenerationSingle(config: AiConfig & { seedIndex?: num
                 const payload = (await response.json()) as ImageApiResponse;
                 return { images: parseImagePayload(payload, mime), responseBody: stringifyLogPayload(payload) };
             },
+            diagnosticTaskId,
         );
     }
 
@@ -661,10 +664,11 @@ async function requestImageGenerationSingle(config: AiConfig & { seedIndex?: num
             const payload = (await response.json()) as ImageApiResponse;
             return { images: parseImagePayload(payload, mime), responseBody: stringifyLogPayload(payload) };
         },
+        diagnosticTaskId,
     );
 }
 
-async function requestImageEditSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams): Promise<GeneratedImage[]> {
+async function requestImageEditSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams, diagnosticTaskId?: string): Promise<GeneratedImage[]> {
     const mime = IMAGE_MIME;
     const formData = new FormData();
     formData.set("model", config.model);
@@ -704,10 +708,12 @@ async function requestImageEditSingle(config: AiConfig, prompt: string, referenc
             const payload = (await response.json()) as ImageApiResponse;
             return { images: parseImagePayload(payload, mime), responseBody: stringifyLogPayload(payload) };
         },
+        diagnosticTaskId,
+        formData,
     );
 }
 
-async function requestAIHubImageEditSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams): Promise<GeneratedImage[]> {
+async function requestAIHubImageEditSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams, diagnosticTaskId?: string): Promise<GeneratedImage[]> {
     const imageUrls = await Promise.all(references.map(imageToDataUrl));
     const guardedPrompt = withPromptGuard(config, withSystemPrompt(config, prompt));
     const options = { model: config.model, prompt: guardedPrompt, n: params.n, size: params.size, quality: params.quality, references: imageUrls };
@@ -734,10 +740,11 @@ async function requestAIHubImageEditSingle(config: AiConfig, prompt: string, ref
             const payload = (await response.json()) as ImageApiResponse;
             return { images: parseImagePayload(payload, IMAGE_MIME), responseBody: stringifyLogPayload(payload) };
         },
+        diagnosticTaskId,
     );
 }
 
-async function requestAIHubChatImageSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams): Promise<GeneratedImage[]> {
+async function requestAIHubChatImageSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams, diagnosticTaskId?: string): Promise<GeneratedImage[]> {
     const body = createAIHubChatImageBody(config.model, withPromptGuard(config, withSystemPrompt(config, prompt)), await Promise.all(references.map(imageToDataUrl)));
     return requestAndParseImages(
         config,
@@ -751,6 +758,7 @@ async function requestAIHubChatImageSingle(config: AiConfig, prompt: string, ref
             if (!images.length) throw new ImageRequestError("接口没有返回图片", payload);
             return { images, responseBody: stringifyLogPayload(payload) };
         },
+        diagnosticTaskId,
     );
 }
 
@@ -782,7 +790,7 @@ function createResponsesInput(config: AiConfig, prompt: string, inputImageDataUr
     ];
 }
 
-async function requestResponsesSingle(config: AiConfig, prompt: string, inputImageDataUrls: string[], params: ImageRequestParams): Promise<GeneratedImage[]> {
+async function requestResponsesSingle(config: AiConfig, prompt: string, inputImageDataUrls: string[], params: ImageRequestParams, diagnosticTaskId?: string): Promise<GeneratedImage[]> {
     const mime = IMAGE_MIME;
     const body: Record<string, unknown> = {
         model: config.model,
@@ -816,10 +824,12 @@ async function requestResponsesSingle(config: AiConfig, prompt: string, inputIma
             const payload = (await response.json()) as ResponsesApiResponse;
             return { images: parseResponsesPayload(payload, mime), responseBody: stringifyLogPayload(payload) };
         },
+        diagnosticTaskId,
     );
 }
 
-async function requestAndParseImages(config: AiConfig, endpoint: string, requestBody: unknown, timeoutSeconds: number, fetchResponse: () => Promise<Response>, parseResponse: (response: Response) => Promise<ParsedImageResponse>) {
+async function requestAndParseImages(config: AiConfig, endpoint: string, requestBody: unknown, timeoutSeconds: number, fetchResponse: () => Promise<Response>, parseResponse: (response: Response) => Promise<ParsedImageResponse>, diagnosticTaskId?: string, diagnosticRequestBody: unknown = requestBody) {
+    appendDiagnosticEvent(diagnosticTaskId, { stage: "request", status: "info", title: "图片请求体已确认", data: { method: "POST", endpoint, request: createDiagnosticRequestSnapshot(diagnosticRequestBody) } });
     const startedAt = Date.now();
     let logged = false;
     try {
@@ -842,28 +852,28 @@ async function requestAndParseImages(config: AiConfig, endpoint: string, request
     }
 }
 
-async function requestImages(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, references: ReferenceImage[]): Promise<GeneratedImage[]> {
+async function requestImages(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, references: ReferenceImage[], diagnosticTaskId?: string): Promise<GeneratedImage[]> {
     const params = createImageRequestParams(config);
     const inputImageDataUrls = references.length ? await Promise.all(references.map((image) => imageToDataUrl(image))) : [];
     const useConcurrentSingleRequests = config.apiMode === "responses" || config.codexCli || config.streamImages;
     if (params.n > 1 && useConcurrentSingleRequests) {
-        const results = await Promise.allSettled(Array.from({ length: params.n }, () => requestImages({ ...config, count: "1" }, prompt, references)));
+        const results = await Promise.allSettled(Array.from({ length: params.n }, () => requestImages({ ...config, count: "1" }, prompt, references, diagnosticTaskId)));
         const images = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
         if (images.length) return images;
         const firstError = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
         throw firstError?.reason || new Error("所有并发请求均失败");
     }
     if (isAIHubConfig(config) && isAIHubAsyncImageModel(config.model)) {
-        const result = await requestVideoGeneration(config, withPromptGuard(config, withSystemPrompt(config, prompt)), { references });
+        const result = await requestVideoGeneration(config, withPromptGuard(config, withSystemPrompt(config, prompt)), { references }, undefined, [], { diagnosticTaskId });
         return [{ id: nanoid(), dataUrl: result.url }];
     }
-    if (isAIHubConfig(config) && isAIHubChatImageModel(config.model)) return requestAIHubChatImageSingle(config, prompt, references, params);
+    if (isAIHubConfig(config) && isAIHubChatImageModel(config.model)) return requestAIHubChatImageSingle(config, prompt, references, params, diagnosticTaskId);
     if (references.length && isAgnesImageModel(config.model)) {
-        return requestAgnesImageEdit(config, prompt, references, params);
+        return requestAgnesImageEdit(config, prompt, references, params, diagnosticTaskId);
     }
-    if (references.length && isAIHubConfig(config)) return requestAIHubImageEditSingle(config, prompt, references, params);
-    if (config.apiMode === "responses") return requestResponsesSingle(config, prompt, inputImageDataUrls, params);
-    return references.length ? requestImageEditSingle(config, prompt, references, params) : requestImageGenerationSingle(config, prompt, params);
+    if (references.length && isAIHubConfig(config)) return requestAIHubImageEditSingle(config, prompt, references, params, diagnosticTaskId);
+    if (config.apiMode === "responses") return requestResponsesSingle(config, prompt, inputImageDataUrls, params, diagnosticTaskId);
+    return references.length ? requestImageEditSingle(config, prompt, references, params, diagnosticTaskId) : requestImageGenerationSingle(config, prompt, params, diagnosticTaskId);
 }
 
 export async function requestGeneration(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string) {
@@ -898,7 +908,7 @@ export async function createCanvasImageTask(config: AiConfig & { seedIndex?: num
         });
         const startedAt = Date.now();
         try {
-            const [image] = await requestImages({ ...config, count: "1" }, prompt, references);
+            const [image] = await requestImages({ ...config, count: "1" }, prompt, references, options.diagnosticTaskId);
             if (!image) throw new Error("接口没有返回图片");
             appendDiagnosticEvent(options.diagnosticTaskId, { stage: "request", status: "success", title: "图片请求已完成", data: { durationMs: Date.now() - startedAt, resultCount: 1 } });
             return {
@@ -919,7 +929,7 @@ export async function createCanvasImageTask(config: AiConfig & { seedIndex?: num
     }
     const params = createImageRequestParams({ ...config, count: "1" });
     const request = await createCanvasImageTaskRequest({ ...config, count: "1" }, prompt, references, params, options);
-    appendDiagnosticEvent(options.diagnosticTaskId, { stage: "request", status: "info", title: "图片请求已组装", data: summarizeDiagnosticImageRequest(request.body, references.length) });
+    appendDiagnosticEvent(options.diagnosticTaskId, { stage: "request", status: "info", title: "图片请求已组装", data: { method: request.method || "POST", endpoint: "/canvas/image-tasks", referenceCount: references.length, request: createDiagnosticRequestSnapshot(request.body) } });
     const startedAt = Date.now();
     const response = await fetch("/api/v1/canvas/image-tasks", request);
     if (!response.ok) {
@@ -939,40 +949,6 @@ function diagnosticImageEndpoint(config: AiConfig, referenceCount: number) {
     if (isAIHubConfig(config) && isAIHubChatImageModel(config.model)) return "/chat/completions";
     if (config.apiMode === "responses") return "/responses";
     return referenceCount ? "/images/edits" : "/images/generations";
-}
-
-function summarizeDiagnosticImageRequest(body: BodyInit | null | undefined, referenceCount: number) {
-    if (body instanceof FormData) {
-        const fields = new Map<string, { count: number; files: number; totalBytes: number; mimeTypes: Set<string> }>();
-        body.forEach((item, key) => {
-            const current = fields.get(key) || { count: 0, files: 0, totalBytes: 0, mimeTypes: new Set<string>() };
-            current.count += 1;
-            if (item instanceof File) {
-                current.files += 1;
-                current.totalBytes += item.size;
-                if (item.type) current.mimeTypes.add(item.type);
-            }
-            fields.set(key, current);
-        });
-        return { bodyType: "form-data", referenceCount, fields: Array.from(fields, ([name, item]) => ({ name, count: item.count, files: item.files, totalBytes: item.totalBytes, mimeTypes: Array.from(item.mimeTypes) })) };
-    }
-    if (typeof body === "string") {
-        try {
-            const record = JSON.parse(body) as Record<string, unknown>;
-            const request = record.request && typeof record.request === "object" ? (record.request as Record<string, unknown>) : record;
-            return {
-                bodyType: "json",
-                referenceCount,
-                fields: Object.keys(request),
-                referenceFields: Object.entries(request)
-                    .filter(([key]) => /(image|reference|frame)/i.test(key))
-                    .map(([name, item]) => ({ name, valueType: Array.isArray(item) ? "array" : typeof item, count: Array.isArray(item) ? item.length : item == null || item === "" ? 0 : 1 })),
-            };
-        } catch {
-            return { bodyType: "json", referenceCount };
-        }
-    }
-    return { bodyType: body ? typeof body : "empty", referenceCount };
 }
 
 export async function pollCanvasImageTaskStatus(taskId: string): Promise<CanvasImageTask> {
@@ -1239,7 +1215,7 @@ function publicHttpUrl(value?: string) {
     }
 }
 
-async function requestAgnesImageEdit(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, references: ReferenceImage[], params: ImageRequestParams): Promise<GeneratedImage[]> {
+async function requestAgnesImageEdit(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, references: ReferenceImage[], params: ImageRequestParams, diagnosticTaskId?: string): Promise<GeneratedImage[]> {
     const mime = IMAGE_MIME;
 
     // 获取所有参考图的公共 HTTP 链接或降级为 base64 数组，完美对齐 extra_body.image
@@ -1288,6 +1264,7 @@ async function requestAgnesImageEdit(config: AiConfig & { seedIndex?: number; se
             const images = parseImagePayload(payload, mime);
             return { images, responseBody: stringifyLogPayload(payload) };
         },
+        diagnosticTaskId,
     );
 }
 

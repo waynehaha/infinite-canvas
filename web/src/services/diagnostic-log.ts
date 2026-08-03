@@ -2,7 +2,7 @@ import localforage from "localforage";
 import { nanoid } from "nanoid";
 
 import { APP_VERSION } from "@/constant/env";
-import { diagnosticExportLooksSafe, sanitizeDiagnosticValue } from "@/lib/diagnostic-log-safety";
+import { diagnosticExportLooksSafe, diagnosticTextStats, prepareDiagnosticValue, sanitizeDiagnosticText, sanitizeDiagnosticValue } from "@/lib/diagnostic-log-safety";
 import { createZip } from "@/lib/zip";
 
 export type DiagnosticMode = "image" | "video" | "audio" | "text" | "workflow";
@@ -57,6 +57,7 @@ const taskQueues = new Map<string, Promise<void>>();
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_TASKS = 200;
 const MAX_EVENTS = 160;
+const DIAGNOSTIC_TASKS_CHANGED_EVENT = "infinite-canvas:diagnostic-tasks-changed";
 
 export function startDiagnosticTask(input: StartDiagnosticTaskInput) {
     const id = `diagnostic_${nanoid(12)}`;
@@ -81,6 +82,7 @@ export function startDiagnosticTask(input: StartDiagnosticTaskInput) {
     };
     enqueueTask(id, async () => {
         await diagnosticStore.setItem(id, task);
+        notifyDiagnosticTasksChanged();
     });
     setTimeout(() => void pruneDiagnosticTasks().catch(() => undefined), 0);
     return id;
@@ -91,12 +93,13 @@ export function appendDiagnosticEvent(taskId: string | undefined, event: Omit<Di
     enqueueTask(taskId, async () => {
         const task = await diagnosticStore.getItem<DiagnosticTask>(taskId);
         if (!task) return;
-        const nextEvent = { ...event, id: nanoid(10), at: Date.now(), data: sanitizeDiagnosticValue(event.data, false) as Record<string, unknown> | undefined };
+        const nextEvent = { ...event, id: nanoid(10), at: Date.now(), data: prepareDiagnosticValue(event.data) as Record<string, unknown> | undefined };
         const previous = task.events[task.events.length - 1];
         if (previous && diagnosticEventFingerprint(previous) === diagnosticEventFingerprint(nextEvent)) return;
         task.events = [...task.events.slice(-(MAX_EVENTS - 1)), nextEvent];
         task.updatedAt = nextEvent.at;
         await diagnosticStore.setItem(taskId, task);
+        notifyDiagnosticTasksChanged();
     });
 }
 
@@ -109,6 +112,7 @@ export function attachDiagnosticRemoteTaskId(taskId: string | undefined, remoteT
         task.remoteTaskIds = [...task.remoteTaskIds, value].slice(-20);
         task.updatedAt = Date.now();
         await diagnosticStore.setItem(taskId, task);
+        notifyDiagnosticTasksChanged();
     });
 }
 
@@ -120,6 +124,7 @@ export function updateDiagnosticReferences(taskId: string | undefined, reference
         task.references = references;
         task.updatedAt = Date.now();
         await diagnosticStore.setItem(taskId, task);
+        notifyDiagnosticTasksChanged();
     });
 }
 
@@ -134,23 +139,36 @@ export function finishDiagnosticTask(taskId: string | undefined, status: Exclude
         task.completedAt = now;
         if (detail) task.events = [...task.events.slice(-(MAX_EVENTS - 1)), eventOf(status === "success" ? "canvas" : "request", status === "success" ? "success" : "failed", status === "success" ? "任务已完成" : "任务已失败", detail)];
         await diagnosticStore.setItem(taskId, task);
+        notifyDiagnosticTasksChanged();
     });
 }
 
-export async function listDiagnosticTasks() {
+export async function listDiagnosticTasks(canvasId?: string) {
     await Promise.all(taskQueues.values());
     const tasks: DiagnosticTask[] = [];
     await diagnosticStore.iterate<DiagnosticTask, void>((task) => {
-        if (task?.schemaVersion === 1) tasks.push(task);
+        if (task?.schemaVersion === 1 && (!canvasId || task.canvasId === canvasId)) tasks.push(task);
     });
     return [...tasks].sort((a, b) => b.createdAt - a.createdAt);
 }
 
-export async function clearDiagnosticTasks() {
-    await diagnosticStore.clear();
+export async function clearDiagnosticTasks(canvasId?: string) {
+    if (!canvasId) {
+        await diagnosticStore.clear();
+    } else {
+        const tasks = await listDiagnosticTasks(canvasId);
+        await Promise.all(tasks.map((task) => diagnosticStore.removeItem(task.id)));
+    }
+    notifyDiagnosticTasksChanged();
 }
 
-export async function createDiagnosticExport(taskId: string, includePrompt = false) {
+export function subscribeDiagnosticTasks(listener: () => void) {
+    if (typeof window === "undefined") return () => undefined;
+    window.addEventListener(DIAGNOSTIC_TASKS_CHANGED_EVENT, listener);
+    return () => window.removeEventListener(DIAGNOSTIC_TASKS_CHANGED_EVENT, listener);
+}
+
+export async function createDiagnosticExport(taskId: string) {
     const tasks = await listDiagnosticTasks();
     const task = tasks.find((item) => item.id === taskId);
     if (!task) throw new Error("找不到所选诊断任务");
@@ -158,7 +176,7 @@ export async function createDiagnosticExport(taskId: string, includePrompt = fal
         .filter((item) => item.canvasId === task.canvasId && item.id !== task.id)
         .slice(0, 4)
         .map(taskSummary);
-    const safeTask = sanitizeDiagnosticValue({ ...task, prompt: includePrompt ? task.prompt : "[默认未导出]" }, includePrompt);
+    const safeTask = sanitizeDiagnosticValue({ ...task, prompt: task.prompt }, true);
     const timeline = { task: safeTask, nearbyTasks: sanitizeDiagnosticValue(nearby, false) };
     const environment = sanitizeDiagnosticValue(
         {
@@ -172,7 +190,7 @@ export async function createDiagnosticExport(taskId: string, includePrompt = fal
     );
     const timelineText = JSON.stringify(timeline, null, 2);
     const environmentText = JSON.stringify(environment, null, 2);
-    const summaryText = buildDiagnosticSummary(task, includePrompt);
+    const summaryText = buildDiagnosticSummary(task);
     if (![timelineText, environmentText, summaryText].every(diagnosticExportLooksSafe)) throw new Error("安全检查未通过，诊断日志未导出");
     const blob = await createZip([
         { name: "诊断摘要.txt", data: summaryText },
@@ -200,6 +218,11 @@ async function pruneDiagnosticTasks() {
     const expiredBefore = Date.now() - RETENTION_MS;
     const removals = tasks.filter((task, index) => task.createdAt < expiredBefore || index >= MAX_TASKS);
     await Promise.all(removals.map((task) => diagnosticStore.removeItem(task.id)));
+    if (removals.length) notifyDiagnosticTasksChanged();
+}
+
+function notifyDiagnosticTasksChanged() {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event(DIAGNOSTIC_TASKS_CHANGED_EVENT));
 }
 
 function diagnosticEventFingerprint(event: Pick<DiagnosticEvent, "stage" | "status" | "title" | "detail" | "data">) {
@@ -210,9 +233,10 @@ function taskSummary(task: DiagnosticTask) {
     return { id: task.id, mode: task.mode, model: task.model, status: task.status, createdAt: task.createdAt, completedAt: task.completedAt };
 }
 
-function buildDiagnosticSummary(task: DiagnosticTask, includePrompt: boolean) {
+function buildDiagnosticSummary(task: DiagnosticTask) {
     const failedEvent = [...task.events].reverse().find((event) => event.status === "failed");
     const diagnosis = classifyDiagnosticFailure(failedEvent);
+    const promptStats = diagnosticTextStats(task.prompt);
     const lines = [
         "AI 创作工作台诊断日志",
         "",
@@ -220,7 +244,7 @@ function buildDiagnosticSummary(task: DiagnosticTask, includePrompt: boolean) {
         "- 不包含 API Key、登录凭证、Cookie 或请求鉴权信息。",
         "- 不包含参考图片、参考视频、生成结果或 Base64 文件内容。",
         "- 完整本地路径和链接查询参数已隐藏。",
-        `- 提示词正文：${includePrompt ? "用户选择包含，仍已执行敏感信息扫描" : "默认未导出"}。`,
+        "- 包含提示词正文，疑似密钥等敏感信息已自动隐藏。",
         "",
         "任务摘要",
         `- 任务编号：${task.id}`,
@@ -229,6 +253,8 @@ function buildDiagnosticSummary(task: DiagnosticTask, includePrompt: boolean) {
         `- 模型：${task.model || "未确定"}`,
         `- 状态：${statusLabel(task.status)}`,
         `- 开始时间：${new Date(task.createdAt).toLocaleString("zh-CN", { hour12: false })}`,
+        `- 提示词长度：${promptStats.characterCount} 个字符，${promptStats.utf8Bytes} 字节`,
+        `- 提示词正文：${sanitizeDiagnosticText(task.prompt)}`,
         `- 初步判断：${diagnosis}`,
         "",
         "参考素材",
@@ -239,7 +265,7 @@ function buildDiagnosticSummary(task: DiagnosticTask, includePrompt: boolean) {
         "任务时间线",
         ...task.events.map((event) => `- ${new Date(event.at).toLocaleTimeString("zh-CN", { hour12: false })} [${eventStatusLabel(event.status)}] ${event.title}${event.detail ? `：${event.detail}` : ""}`),
     ];
-    return sanitizeDiagnosticValue(lines.join("\n"), includePrompt) as string;
+    return sanitizeDiagnosticValue(lines.join("\n"), true) as string;
 }
 
 function classifyDiagnosticFailure(event?: DiagnosticEvent) {

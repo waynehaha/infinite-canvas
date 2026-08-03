@@ -62,6 +62,14 @@ APIMart 点此链接 [https://apimart.ai/register?aff=fWMrEv](https://apimart.ai
 
 详细说明见 [免 Docker 原生安装包](docs/overview/20260731-native-installers.md)。
 
+### macOS 开发预览
+
+项目维护时，打开 `Mac用户` 文件夹并双击 `启动开发预览.command`。入口会启动当前源码的前后端服务并打开 `http://localhost:3000`；重复双击会直接打开已运行的页面。需要结束时双击 `停止开发预览.command`。
+
+- 开发预览不使用 Docker，需要本机已安装 Go，以及 Node.js 或 Bun。
+- 首次运行缺少前端依赖时会自动安装，启动日志保存在 `data/dev-preview`。
+- 停止入口只结束由开发预览入口启动的服务，不会结束其他程序占用的端口。
+
 ### Docker 双击启动（备用）
 
 项目提供 Windows 和 macOS 双击入口。首次使用会检查 Docker Desktop；未安装时会提供自动安装或下载引导。
@@ -69,7 +77,7 @@ APIMart 点此链接 [https://apimart.ai/register?aff=fWMrEv](https://apimart.ai
 | 系统 | 启动或打开 | 停止服务 |
 | --- | --- | --- |
 | Windows | 打开 `Windows用户` 文件夹，双击 `启动AI创作工作台.bat` | 双击 `停止AI创作工作台.bat` |
-| macOS | 打开 `Mac用户` 文件夹，双击 `启动AI创作工作台.command` | 双击 `停止AI创作工作台.command` |
+| macOS | 打开 `Mac用户` 文件夹，双击 `Docker备用启动AI创作工作台.command` | 双击 `Docker备用停止AI创作工作台.command` |
 
 - 启动入口可重复使用：未运行时启动服务，已经运行时直接打开网页。
 - 默认从 `3001` 开始自动寻找空闲端口，端口冲突不需要手动处理。

@@ -4,7 +4,6 @@ import { App, Button, Form, Input, Modal, Segmented, Select, Switch } from "antd
 import { useEffect, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
-import { DiagnosticExportSection } from "@/components/layout/diagnostic-export-section";
 import { fetchImageModels, ModelListRequestError } from "@/services/api/image";
 import { fetchUserConfig, measureUserStorageProvider, syncUserModelConfig, syncUserStorageProvider } from "@/services/api/user-config";
 import { clearStorageConfigCache as clearFileStorageCache } from "@/services/file-storage";
@@ -441,7 +440,6 @@ export function AppConfigModal() {
                             <Input.TextArea rows={3} value={config.systemPrompt} placeholder="例如：你是一位擅长电影感写实摄影的视觉导演。" onChange={(event) => updateConfig("systemPrompt", event.target.value)} />
                         </Form.Item>
                     ) : null}
-                    <DiagnosticExportSection active={isConfigOpen} />
                 </Form>
             </div>
         </Modal>

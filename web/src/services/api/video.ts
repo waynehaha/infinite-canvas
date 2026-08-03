@@ -6,6 +6,7 @@ import { classifyVideoPollingFailure, requestVideoContentCandidates, selectVideo
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { isKIEGrokVideoModel } from "@/components/video-settings-panel";
 import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
+import { createDiagnosticRequestSnapshot } from "@/lib/diagnostic-log-safety";
 import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
 import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig, type VideoElementReference } from "@/stores/use-config-store";
@@ -114,11 +115,11 @@ export type VideoReferenceInput = {
     lastFrame?: ReferenceImage | null;
 };
 
-export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] | VideoReferenceInput = [], videoReferencesOrProgress?: ReferenceVideo[] | ((progress: number) => void), audioReferences: ReferenceAudio[] = []) {
+export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] | VideoReferenceInput = [], videoReferencesOrProgress?: ReferenceVideo[] | ((progress: number) => void), audioReferences: ReferenceAudio[] = [], options: VideoTaskCreateOptions = {}) {
     const legacyVideoReferences = Array.isArray(videoReferencesOrProgress) ? videoReferencesOrProgress : undefined;
     const onProgress = typeof videoReferencesOrProgress === "function" ? videoReferencesOrProgress : undefined;
     const input = legacyVideoReferences ? { references: Array.isArray(references) ? references : references.references || [], videoReferences: legacyVideoReferences, audioReferences } : references;
-    const created = await createVideoGenerationTask(config, prompt, input, onProgress ? (progress) => onProgress(progress) : undefined);
+    const created = await createVideoGenerationTask(config, prompt, input, onProgress ? (progress) => onProgress(progress) : undefined, options);
     return pollCreatedVideoGenerationTask(config, created.task, { startedAt: created.startedAt, requestBody: created.requestBody, onProgress: onProgress ? (progress) => onProgress(progress) : undefined });
 }
 
@@ -127,7 +128,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const systemPrompt = (config.systemPrompts.video || config.systemPrompt).trim();
     const createOptions = normalizeVideoTaskCreateOptions(options);
     const body = await createVideoRequestBody(config, model, systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt, normalizeVideoReferenceInput(references));
-    appendDiagnosticEvent(createOptions.diagnosticTaskId, { stage: "request", status: "info", title: "视频请求已组装", data: summarizeDiagnosticRequestBody(body) });
+    appendDiagnosticEvent(createOptions.diagnosticTaskId, { stage: "request", status: "info", title: "视频请求已组装", data: { method: "POST", endpoint: "/videos", request: createDiagnosticRequestSnapshot(body) } });
     const startedAt = Date.now();
     try {
         const accountProxy = usesAccountProxy(config);
@@ -693,37 +694,6 @@ function summarizeVideoRequestBody(value: unknown) {
         return { fields, files };
     }
     return value;
-}
-
-function summarizeDiagnosticRequestBody(value: unknown) {
-    if (value instanceof FormData) {
-        const fields = new Map<string, { count: number; files: number; totalBytes: number; mimeTypes: Set<string> }>();
-        value.forEach((item, key) => {
-            const current = fields.get(key) || { count: 0, files: 0, totalBytes: 0, mimeTypes: new Set<string>() };
-            current.count += 1;
-            if (item instanceof File) {
-                current.files += 1;
-                current.totalBytes += item.size;
-                if (item.type) current.mimeTypes.add(item.type);
-            }
-            fields.set(key, current);
-        });
-        return {
-            bodyType: "form-data",
-            fields: Array.from(fields, ([name, item]) => ({ name, count: item.count, files: item.files, totalBytes: item.totalBytes, mimeTypes: Array.from(item.mimeTypes) })),
-        };
-    }
-    if (value && typeof value === "object") {
-        const record = value as Record<string, unknown>;
-        return {
-            bodyType: "json",
-            fields: Object.keys(record),
-            referenceFields: Object.entries(record)
-                .filter(([key]) => /(image|video|audio|reference|frame)/i.test(key))
-                .map(([name, item]) => ({ name, valueType: Array.isArray(item) ? "array" : typeof item, count: Array.isArray(item) ? item.length : item == null || item === "" ? 0 : 1 })),
-        };
-    }
-    return { bodyType: typeof value };
 }
 
 function formatErrorDetail(detail: unknown) {
