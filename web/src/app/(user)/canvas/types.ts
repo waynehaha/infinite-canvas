@@ -81,6 +81,7 @@ export type CanvasNodeMetadata = {
     audioTaskResultId?: string;
     videoTaskId?: string;
     videoTaskVideoId?: string;
+    diagnosticTaskId?: string;
     firstFrameNodeId?: string;
     lastFrameNodeId?: string;
     multiShot?: string;

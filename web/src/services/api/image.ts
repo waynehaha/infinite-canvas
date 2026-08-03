@@ -7,6 +7,7 @@ import { requestVideoGeneration } from "@/services/api/video";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
 import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { appendDiagnosticEvent } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
 import { nanoid } from "nanoid";
 
@@ -58,7 +59,7 @@ export type CanvasImageTask = {
     error?: { message?: string };
     error_detail?: string;
 };
-export type CanvasImageTaskOptions = { nodeId?: string; source?: "canvas" | "image-workbench" | "workflow"; sourceId?: string; clientTaskId?: string };
+export type CanvasImageTaskOptions = { nodeId?: string; source?: "canvas" | "image-workbench" | "workflow"; sourceId?: string; clientTaskId?: string; diagnosticTaskId?: string };
 
 type ParsedImageResponse = {
     images: GeneratedImage[];
@@ -889,31 +890,89 @@ export async function requestEdit(config: AiConfig & { seedIndex?: number; seedC
 
 export async function createCanvasImageTask(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, references: ReferenceImage[], options: CanvasImageTaskOptions = {}): Promise<CanvasImageTask> {
     if (!usesAccountProxy(config) || (isAIHubConfig(config) && (isAIHubAsyncImageModel(config.model) || isAIHubChatImageModel(config.model)))) {
-        const [image] = await requestImages({ ...config, count: "1" }, prompt, references);
-        if (!image) throw new Error("接口没有返回图片");
-        return {
-            id: options.clientTaskId || nanoid(),
-            source: options.source || "canvas",
-            source_id: options.sourceId || "",
-            node_id: options.nodeId || "",
-            model: config.model,
-            prompt,
-            status: "completed",
-            progress: 100,
-            image_url: image.dataUrl,
-        };
+        appendDiagnosticEvent(options.diagnosticTaskId, {
+            stage: "request",
+            status: "info",
+            title: "图片请求已交给模型适配器",
+            data: { endpoint: diagnosticImageEndpoint(config, references.length), referenceCount: references.length, adapter: isAIHubConfig(config) ? "AIHub" : "兼容接口" },
+        });
+        const startedAt = Date.now();
+        try {
+            const [image] = await requestImages({ ...config, count: "1" }, prompt, references);
+            if (!image) throw new Error("接口没有返回图片");
+            appendDiagnosticEvent(options.diagnosticTaskId, { stage: "request", status: "success", title: "图片请求已完成", data: { durationMs: Date.now() - startedAt, resultCount: 1 } });
+            return {
+                id: options.clientTaskId || nanoid(),
+                source: options.source || "canvas",
+                source_id: options.sourceId || "",
+                node_id: options.nodeId || "",
+                model: config.model,
+                prompt,
+                status: "completed",
+                progress: 100,
+                image_url: image.dataUrl,
+            };
+        } catch (error) {
+            appendDiagnosticEvent(options.diagnosticTaskId, { stage: "request", status: "failed", title: "图片请求失败", detail: error instanceof Error ? error.message : "图片请求失败", data: { durationMs: Date.now() - startedAt } });
+            throw error;
+        }
     }
     const params = createImageRequestParams({ ...config, count: "1" });
     const request = await createCanvasImageTaskRequest({ ...config, count: "1" }, prompt, references, params, options);
+    appendDiagnosticEvent(options.diagnosticTaskId, { stage: "request", status: "info", title: "图片请求已组装", data: summarizeDiagnosticImageRequest(request.body, references.length) });
+    const startedAt = Date.now();
     const response = await fetch("/api/v1/canvas/image-tasks", request);
     if (!response.ok) {
         const error = await fetchErrorDetail(response, "图片任务创建失败");
+        appendDiagnosticEvent(options.diagnosticTaskId, { stage: "request", status: "failed", title: "图片任务提交失败", detail: error.message, data: { endpoint: "/canvas/image-tasks", httpStatus: response.status, durationMs: Date.now() - startedAt } });
         throw new ImageRequestError(error.message, error.detail);
     }
     const payload = (await response.json()) as { code?: number; msg?: string; data?: CanvasImageTask };
     if (payload.code !== 0 || !payload.data) throw new ImageRequestError(payload.msg || "图片任务创建失败", payload);
+    appendDiagnosticEvent(options.diagnosticTaskId, { stage: "request", status: "success", title: "图片任务提交成功", data: { endpoint: "/canvas/image-tasks", httpStatus: response.status, durationMs: Date.now() - startedAt } });
     refreshRemoteUser(config);
     return payload.data;
+}
+
+function diagnosticImageEndpoint(config: AiConfig, referenceCount: number) {
+    if (isAIHubConfig(config) && isAIHubAsyncImageModel(config.model)) return "/videos";
+    if (isAIHubConfig(config) && isAIHubChatImageModel(config.model)) return "/chat/completions";
+    if (config.apiMode === "responses") return "/responses";
+    return referenceCount ? "/images/edits" : "/images/generations";
+}
+
+function summarizeDiagnosticImageRequest(body: BodyInit | null | undefined, referenceCount: number) {
+    if (body instanceof FormData) {
+        const fields = new Map<string, { count: number; files: number; totalBytes: number; mimeTypes: Set<string> }>();
+        body.forEach((item, key) => {
+            const current = fields.get(key) || { count: 0, files: 0, totalBytes: 0, mimeTypes: new Set<string>() };
+            current.count += 1;
+            if (item instanceof File) {
+                current.files += 1;
+                current.totalBytes += item.size;
+                if (item.type) current.mimeTypes.add(item.type);
+            }
+            fields.set(key, current);
+        });
+        return { bodyType: "form-data", referenceCount, fields: Array.from(fields, ([name, item]) => ({ name, count: item.count, files: item.files, totalBytes: item.totalBytes, mimeTypes: Array.from(item.mimeTypes) })) };
+    }
+    if (typeof body === "string") {
+        try {
+            const record = JSON.parse(body) as Record<string, unknown>;
+            const request = record.request && typeof record.request === "object" ? (record.request as Record<string, unknown>) : record;
+            return {
+                bodyType: "json",
+                referenceCount,
+                fields: Object.keys(request),
+                referenceFields: Object.entries(request)
+                    .filter(([key]) => /(image|reference|frame)/i.test(key))
+                    .map(([name, item]) => ({ name, valueType: Array.isArray(item) ? "array" : typeof item, count: Array.isArray(item) ? item.length : item == null || item === "" ? 0 : 1 })),
+            };
+        } catch {
+            return { bodyType: "json", referenceCount };
+        }
+    }
+    return { bodyType: body ? typeof body : "empty", referenceCount };
 }
 
 export async function pollCanvasImageTaskStatus(taskId: string): Promise<CanvasImageTask> {

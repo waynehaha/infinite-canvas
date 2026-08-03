@@ -12,6 +12,7 @@ import { createCanvasImageTask, pollCanvasImageTaskStatus, requestImageQuestion,
 import { createCanvasAudioTask, pollCanvasAudioTaskStatus, type CanvasAudioTask } from "@/services/api/audio";
 import { createVideoGenerationTask, pollVideoGenerationTaskStatus, VideoRequestError, VIDEO_POLL_INTERVAL_MS, type VideoResponse } from "@/services/api/video";
 import { resolveVideoTaskIds } from "@/services/api/video-polling";
+import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, finishDiagnosticTask, startDiagnosticTask, updateDiagnosticReferences, type DiagnosticMode, type DiagnosticReferenceSummary } from "@/services/diagnostic-log";
 import { defaultConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { collectImageStorageKeys, deleteStoredImages, resolveImageUrl, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
@@ -550,21 +551,30 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             videoTargets.forEach((node) => {
                 if (pollingVideoNodeIdsRef.current.has(node.id)) return;
                 const taskId = canvasVideoTaskId(node.metadata);
+                const diagnosticTaskId = node.metadata?.diagnosticTaskId;
                 const generationConfig = buildGenerationConfig(effectiveConfig, node, "video");
                 if (!taskId || !isAiConfigReady(generationConfig, generationConfig.model)) return;
                 pollingVideoNodeIdsRef.current.add(node.id);
                 void pollVideoGenerationTaskStatus(generationConfig, canvasVideoTaskFromMetadata(node.metadata), (task) => {
+                    appendDiagnosticEvent(diagnosticTaskId, { stage: "polling", status: "info", title: "视频任务状态已更新", detail: task.status || "处理中", data: { progressBucket: diagnosticProgressBucket(task.progress), remoteTaskId: taskId } });
                     setNodes((prev) => applyCanvasVideoTaskProgressUpdate(prev, node.id, task, taskId, generationConfig, node.metadata?.startedAt || Date.now()));
                 })
                     .then((task) => {
                         setNodes((prev) => applyCanvasVideoTaskUpdate(prev, node.id, task, taskId, generationConfig, node.metadata?.startedAt || Date.now(), { width: node.width, height: node.height }));
+                        if (canvasVideoTaskCompleted(task)) {
+                            appendDiagnosticEvent(diagnosticTaskId, { stage: "canvas", status: "success", title: "视频结果已写入画布" });
+                            finishDiagnosticTask(diagnosticTaskId, "success", "视频任务完成并已显示在画布中");
+                        }
                     })
                     .catch((error) => {
                         if (!(error instanceof VideoRequestError)) return;
                         if (error.retryable) {
+                            appendDiagnosticEvent(diagnosticTaskId, { stage: "result", status: "warning", title: "视频结果暂未就绪", detail: error.message });
                             setNodes((prev) => prev.map((item) => (item.id === node.id && (item.metadata?.progress || 0) >= 100 ? { ...item, metadata: { ...item.metadata, errorDetails: "视频已生成，结果暂未就绪，正在自动重试" } } : item)));
                             return;
                         }
+                        appendDiagnosticEvent(diagnosticTaskId, { stage: "polling", status: "failed", title: "视频任务查询失败", detail: error.message });
+                        finishDiagnosticTask(diagnosticTaskId, "failed", error.message);
                         setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: error.message } } : item)));
                     })
                     .finally(() => {
@@ -575,11 +585,17 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             imageTargets.forEach((node) => {
                 if (pollingImageNodeIdsRef.current.has(node.id) || !node.metadata?.imageTaskId) return;
                 pollingImageNodeIdsRef.current.add(node.id);
+                const diagnosticTaskId = node.metadata?.diagnosticTaskId;
                 void pollCanvasImageTaskStatus(node.metadata.imageTaskId)
                     .then((task) => {
                         setNodes((prev) => applyCanvasImageTaskUpdate(prev, node.id, task, node.metadata?.startedAt || Date.now(), { width: node.width, height: node.height }));
+                        appendDiagnosticEvent(diagnosticTaskId, { stage: "polling", status: "info", title: "图片任务状态已更新", detail: task.status || "处理中", data: { progressBucket: diagnosticProgressBucket(task.progress), remoteTaskId: task.id } });
+                        if (canvasTaskCompleted(task.status) || task.image_url || task.url) {
+                            appendDiagnosticEvent(diagnosticTaskId, { stage: "canvas", status: "success", title: "图片结果已写入画布" });
+                            finishDiagnosticTask(diagnosticTaskId, "success", "图片任务完成并已显示在画布中");
+                        }
                     })
-                    .catch(() => undefined)
+                    .catch((error) => appendDiagnosticEvent(diagnosticTaskId, { stage: "polling", status: "warning", title: "图片任务本次查询失败", detail: error instanceof Error ? error.message : "读取图片任务失败" }))
                     .finally(() => {
                         pollingImageNodeIdsRef.current.delete(node.id);
                     });
@@ -588,11 +604,17 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             audioTargets.forEach((node) => {
                 if (pollingAudioNodeIdsRef.current.has(node.id) || !node.metadata?.audioTaskId) return;
                 pollingAudioNodeIdsRef.current.add(node.id);
+                const diagnosticTaskId = node.metadata?.diagnosticTaskId;
                 void pollCanvasAudioTaskStatus(node.metadata.audioTaskId)
                     .then((task) => {
                         setNodes((prev) => applyCanvasAudioTaskUpdate(prev, node.id, task, node.metadata?.startedAt || Date.now()));
+                        appendDiagnosticEvent(diagnosticTaskId, { stage: "polling", status: "info", title: "音频任务状态已更新", detail: task.status || "处理中", data: { progressBucket: diagnosticProgressBucket(task.progress), remoteTaskId: task.id } });
+                        if (canvasTaskCompleted(task.status) || task.audio_url || task.url) {
+                            appendDiagnosticEvent(diagnosticTaskId, { stage: "canvas", status: "success", title: "音频结果已写入画布" });
+                            finishDiagnosticTask(diagnosticTaskId, "success", "音频任务完成并已显示在画布中");
+                        }
                     })
-                    .catch(() => undefined)
+                    .catch((error) => appendDiagnosticEvent(diagnosticTaskId, { stage: "polling", status: "warning", title: "音频任务本次查询失败", detail: error instanceof Error ? error.message : "读取音频任务失败" }))
                     .finally(() => {
                         pollingAudioNodeIdsRef.current.delete(node.id);
                     });
@@ -1925,9 +1947,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             } finally {
                 hideLoading();
             }
-        },
-        [message],
-    );
+    }, [message]);
 
     const downloadNodeImage = useCallback((node: CanvasNodeData) => {
         if ((!isCanvasImageNodeType(node.type) && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
@@ -1998,7 +2018,9 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             hideLoading();
             uploadingImageNodeIdsRef.current.delete(node.id);
         }
-    }, [message]);
+        },
+        [message],
+    );
 
     const saveNodeAsset = useCallback(
         async (node: CanvasNodeData) => {
@@ -2485,17 +2507,54 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
             const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
             const generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode);
+            const diagnosticTaskId = startDiagnosticTask({
+                canvasId: projectId,
+                canvasTitle: currentProject?.title || "未命名画布",
+                nodeId,
+                mode,
+                model: generationConfig.model,
+                channelMode: generationConfig.channelMode,
+                channelId: generationConfig.activeChannelId || "",
+                prompt,
+            });
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                appendDiagnosticEvent(diagnosticTaskId, { stage: "config", status: "failed", title: "生成配置不完整", detail: "缺少可用渠道、模型或 API Key" });
+                finishDiagnosticTask(diagnosticTaskId, "failed", "生成配置不完整，尚未发送请求");
                 openConfigDialog(true);
                 return;
             }
+            appendDiagnosticEvent(diagnosticTaskId, { stage: "config", status: "success", title: "生成配置检查通过", data: { model: generationConfig.model, channelMode: generationConfig.channelMode, channelId: generationConfig.activeChannelId || "" } });
 
             setRunningNodeId(nodeId);
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
-            const generationContext = await hydrateNodeGenerationContext(
-                buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
-            );
+            const rawGenerationContext = buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt);
+            const diagnosticReferences = diagnosticReferencesFromContext(rawGenerationContext);
+            updateDiagnosticReferences(diagnosticTaskId, diagnosticReferences);
+            appendDiagnosticEvent(diagnosticTaskId, {
+                stage: "input",
+                status: "success",
+                title: "已收集本次生成输入",
+                data: {
+                    referenceImages: rawGenerationContext.referenceImages.length,
+                    referenceVideos: rawGenerationContext.referenceVideos.length,
+                    referenceAudios: rawGenerationContext.referenceAudios.length,
+                    hasFirstFrame: Boolean(rawGenerationContext.firstFrame),
+                    hasLastFrame: Boolean(rawGenerationContext.lastFrame),
+                },
+            });
+            let generationContext: NodeGenerationContext;
+            try {
+                generationContext = await hydrateNodeGenerationContext(rawGenerationContext);
+                appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "success", title: diagnosticReferences.length ? "参考素材已成功读取" : "本次提交没有参考素材", data: { references: diagnosticReferences } });
+            } catch (error) {
+                const errorDetails = error instanceof Error ? error.message : "参考素材读取失败";
+                appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "failed", title: "参考素材读取失败", detail: errorDetails });
+                finishDiagnosticTask(diagnosticTaskId, "failed", errorDetails);
+                message.error(errorDetails);
+                setRunningNodeId(null);
+                return;
+            }
             const effectivePrompt = generationContext.prompt.trim();
             const requestPrompt =
                 mode === "video" || (mode === "image" && !isPanoramaNodeType(sourceNode?.type))
@@ -2504,6 +2563,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const markSourceStatus = !isCanvasImageNodeType(sourceNode?.type) && !editingTextNode;
             const statusPrompt = sourceNode?.type === CanvasNodeType.Config ? effectivePrompt : prompt;
             if (!effectivePrompt && (mode === "text" || mode === "audio")) {
+                appendDiagnosticEvent(diagnosticTaskId, { stage: "input", status: "failed", title: "缺少可生成内容", detail: "提示词为空，尚未发送请求" });
+                finishDiagnosticTask(diagnosticTaskId, "failed", "提示词为空，尚未发送请求");
                 setRunningNodeId(null);
                 return;
             }
@@ -2549,6 +2610,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                             panoramaFinalPrompt: panoramaPrompt,
                             panoramaProjection: undefined,
                             status: NODE_STATUS_LOADING,
+                            diagnosticTaskId,
                             startedAt: generationStartedAt,
                             progress: 0,
                             imageTaskId: primaryTargetId ? targetTaskIds[primaryTargetId] : undefined,
@@ -2576,6 +2638,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                             panoramaFinalPrompt: panoramaPrompt,
                             panoramaProjection: undefined,
                             status: NODE_STATUS_LOADING,
+                            diagnosticTaskId,
                             startedAt: generationStartedAt,
                             progress: 0,
                             imageTaskId: targetTaskIds[id],
@@ -2607,10 +2670,18 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     setSelectedConnectionId(null);
                     setDialogNodeId(nodeId);
 
+                    appendDiagnosticEvent(diagnosticTaskId, { stage: "request", status: "started", title: "开始提交全景图请求", data: { requestCount: targetIds.length, referenceCount: referenceImages.length } });
                     const taskResults = await Promise.all(
                         targetIds.map(async (targetId) => {
                             try {
-                                const task = await createCanvasImageTask({ ...panoramaGenerationConfig, count: "1", quality: panoramaGenerationConfig.quality === "auto" ? "medium" : panoramaGenerationConfig.quality }, panoramaPrompt, referenceImages, { nodeId: targetId, sourceId: projectId, clientTaskId: targetTaskIds[targetId] });
+                                const task = await createCanvasImageTask({ ...panoramaGenerationConfig, count: "1", quality: panoramaGenerationConfig.quality === "auto" ? "medium" : panoramaGenerationConfig.quality }, panoramaPrompt, referenceImages, {
+                                    nodeId: targetId,
+                                    sourceId: projectId,
+                                    clientTaskId: targetTaskIds[targetId],
+                                    diagnosticTaskId,
+                                });
+                                attachDiagnosticRemoteTaskId(diagnosticTaskId, task.id);
+                                appendDiagnosticEvent(diagnosticTaskId, { stage: "task", status: "success", title: "全景图任务已创建", data: { childNodeId: targetId, remoteTaskId: task.id, status: task.status } });
                                 if (task.image_url || task.url) {
                                     setNodes((prev) => {
                                         const root = prev.find((node) => node.id === rootId);
@@ -2620,6 +2691,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                         }
                                         return next;
                                     });
+                                    appendDiagnosticEvent(diagnosticTaskId, { stage: "canvas", status: "success", title: "全景图结果已写入画布", data: { childNodeId: targetId } });
+                                    finishDiagnosticTask(diagnosticTaskId, "success", "全景图结果已返回并显示在画布中");
                                     return true;
                                 }
                                 setNodes((prev) => {
@@ -2638,6 +2711,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                 return true;
                             } catch (error) {
                                 const errorDetails = error instanceof Error ? error.message : "全景图生成失败";
+                                appendDiagnosticEvent(diagnosticTaskId, { stage: "request", status: "failed", title: "全景图任务创建失败", detail: errorDetails, data: { childNodeId: targetId } });
+                                finishDiagnosticTask(diagnosticTaskId, "failed", errorDetails);
                                 setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
                                 return false;
                             }
@@ -2694,6 +2769,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                             prompt: effectivePrompt,
                             cameraControl: sourceNode?.metadata?.cameraControl,
                             status: NODE_STATUS_LOADING,
+                            diagnosticTaskId,
                             startedAt: generationStartedAt,
                             progress: 0,
                             imageTaskId: primaryTargetId ? targetTaskIds[primaryTargetId] : undefined,
@@ -2715,7 +2791,17 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         },
                         width: imageSize.width,
                         height: imageSize.height,
-                        metadata: { prompt: effectivePrompt, cameraControl: sourceNode?.metadata?.cameraControl, status: NODE_STATUS_LOADING, startedAt: generationStartedAt, progress: 0, imageTaskId: targetTaskIds[id], batchRootId: count > 1 ? rootId : undefined, ...generationMetadata },
+                        metadata: {
+                            prompt: effectivePrompt,
+                            cameraControl: sourceNode?.metadata?.cameraControl,
+                            status: NODE_STATUS_LOADING,
+                            diagnosticTaskId,
+                            startedAt: generationStartedAt,
+                            progress: 0,
+                            imageTaskId: targetTaskIds[id],
+                            batchRootId: count > 1 ? rootId : undefined,
+                            ...generationMetadata,
+                        },
                     }));
                     const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
 
@@ -2759,10 +2845,13 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     setSelectedConnectionId(null);
                     setDialogNodeId(nodeId);
 
+                    appendDiagnosticEvent(diagnosticTaskId, { stage: "request", status: "started", title: "开始提交图片请求", data: { requestCount: targetIds.length, referenceCount: referenceImages.length, generationType } });
                     const taskResults = await Promise.all(
                         targetIds.map(async (targetId) => {
                             try {
-                                const task = await createCanvasImageTask({ ...generationConfig, count: "1" }, requestPrompt, referenceImages, { nodeId: targetId, sourceId: projectId, clientTaskId: targetTaskIds[targetId] });
+                                const task = await createCanvasImageTask({ ...generationConfig, count: "1" }, requestPrompt, referenceImages, { nodeId: targetId, sourceId: projectId, clientTaskId: targetTaskIds[targetId], diagnosticTaskId });
+                                attachDiagnosticRemoteTaskId(diagnosticTaskId, task.id);
+                                appendDiagnosticEvent(diagnosticTaskId, { stage: "task", status: "success", title: "图片任务已创建", data: { childNodeId: targetId, remoteTaskId: task.id, status: task.status } });
                                 if (task.image_url || task.url) {
                                     setNodes((prev) => {
                                         const root = prev.find((node) => node.id === rootId);
@@ -2772,6 +2861,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                         }
                                         return next;
                                     });
+                                    appendDiagnosticEvent(diagnosticTaskId, { stage: "canvas", status: "success", title: "图片结果已写入画布", data: { childNodeId: targetId } });
+                                    finishDiagnosticTask(diagnosticTaskId, "success", "图片结果已返回并显示在画布中");
                                     return true;
                                 }
                                 setNodes((prev) => {
@@ -2795,6 +2886,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                 return true;
                             } catch (error) {
                                 const errorDetails = error instanceof Error ? error.message : "生成失败";
+                                appendDiagnosticEvent(diagnosticTaskId, { stage: "request", status: "failed", title: "图片任务创建失败", detail: errorDetails, data: { childNodeId: targetId } });
+                                finishDiagnosticTask(diagnosticTaskId, "failed", errorDetails);
                                 setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
                                 return false;
                             }
@@ -2835,13 +2928,60 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         position: isEmptyVideoNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y },
                         width: isEmptyVideoNode ? sourceNode.width : spec.width,
                         height: isEmptyVideoNode ? sourceNode.height : spec.height,
-                        metadata: { prompt: effectivePrompt, cameraControl: sourceNode?.metadata?.cameraControl, status: NODE_STATUS_LOADING, model: videoGenerationConfig.model, channelId: videoGenerationConfig.videoChannelId || videoGenerationConfig.activeChannelId, size: videoGenerationConfig.size, seconds: videoGenerationConfig.videoSeconds, vquality: videoGenerationConfig.vquality, mode: videoGenerationConfig.videoMode, negativePrompt: videoGenerationConfig.videoNegativePrompt, multiShot: videoGenerationConfig.videoMultiShot, shotType: videoGenerationConfig.videoShotType, generateAudio: videoGenerationConfig.videoGenerateAudio, characterOrientation: videoGenerationConfig.videoCharacterOrientation, watermark: videoGenerationConfig.videoWatermark, references: generationReferenceUrls({ ...generationContext, referenceImages: videoReferenceImages, firstFrame, lastFrame }), firstFrameNodeId: sourceNode?.metadata?.firstFrameNodeId, lastFrameNodeId: sourceNode?.metadata?.lastFrameNodeId, klingImageNodeIds: sourceNode?.metadata?.klingImageNodeIds, klingMultiPrompt: sourceNode?.metadata?.klingMultiPrompt, klingElementList: sourceNode?.metadata?.klingElementList, startedAt: generationStartedAt, progress: 0, videoTaskId: clientTaskId },
+                        metadata: {
+                            prompt: effectivePrompt,
+                            cameraControl: sourceNode?.metadata?.cameraControl,
+                            status: NODE_STATUS_LOADING,
+                            diagnosticTaskId,
+                            model: videoGenerationConfig.model,
+                            channelId: videoGenerationConfig.videoChannelId || videoGenerationConfig.activeChannelId,
+                            size: videoGenerationConfig.size,
+                            seconds: videoGenerationConfig.videoSeconds,
+                            vquality: videoGenerationConfig.vquality,
+                            mode: videoGenerationConfig.videoMode,
+                            negativePrompt: videoGenerationConfig.videoNegativePrompt,
+                            multiShot: videoGenerationConfig.videoMultiShot,
+                            shotType: videoGenerationConfig.videoShotType,
+                            generateAudio: videoGenerationConfig.videoGenerateAudio,
+                            characterOrientation: videoGenerationConfig.videoCharacterOrientation,
+                            watermark: videoGenerationConfig.videoWatermark,
+                            references: generationReferenceUrls({ ...generationContext, referenceImages: videoReferenceImages, firstFrame, lastFrame }),
+                            firstFrameNodeId: sourceNode?.metadata?.firstFrameNodeId,
+                            lastFrameNodeId: sourceNode?.metadata?.lastFrameNodeId,
+                            klingImageNodeIds: sourceNode?.metadata?.klingImageNodeIds,
+                            klingMultiPrompt: sourceNode?.metadata?.klingMultiPrompt,
+                            klingElementList: sourceNode?.metadata?.klingElementList,
+                            startedAt: generationStartedAt,
+                            progress: 0,
+                            videoTaskId: clientTaskId,
+                        },
                     };
                     pendingChildIds = [videoId];
                     setNodes((prev) => (isEmptyVideoNode ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode } : node)) : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode]));
                     if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
-                    const created = await createVideoGenerationTask(videoGenerationConfig, requestPrompt, { references: videoReferenceImages, firstFrame, lastFrame, videoReferences: generationContext.referenceVideos, audioReferences: generationContext.referenceAudios }, undefined, { clientTaskId, source: "canvas", sourceId: videoId });
+                    appendDiagnosticEvent(diagnosticTaskId, {
+                        stage: "request",
+                        status: "started",
+                        title: "开始提交视频请求",
+                        data: {
+                            referenceImages: videoReferenceImages.length,
+                            referenceVideos: generationContext.referenceVideos.length,
+                            referenceAudios: generationContext.referenceAudios.length,
+                            hasFirstFrame: Boolean(firstFrame),
+                            hasLastFrame: Boolean(lastFrame),
+                        },
+                    });
+                    const created = await createVideoGenerationTask(
+                        videoGenerationConfig,
+                        requestPrompt,
+                        { references: videoReferenceImages, firstFrame, lastFrame, videoReferences: generationContext.referenceVideos, audioReferences: generationContext.referenceAudios },
+                        undefined,
+                        { clientTaskId, source: "canvas", sourceId: videoId, diagnosticTaskId },
+                    );
+                    attachDiagnosticRemoteTaskId(diagnosticTaskId, created.pollId);
+                    appendDiagnosticEvent(diagnosticTaskId, { stage: "task", status: "success", title: "视频任务已创建", data: { remoteTaskId: created.pollId, status: created.task.status } });
                     setNodes((prev) => applyCanvasVideoTaskUpdate(prev, videoId, created.task, created.pollId, videoGenerationConfig, generationStartedAt, spec));
+                    if (canvasVideoTaskCompleted(created.task)) finishDiagnosticTask(diagnosticTaskId, "success", "视频结果已返回并显示在画布中");
                     return;
                 }
 
@@ -2858,13 +2998,32 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         position: isEmptyAudioNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y + ((sourceNode?.height || spec.height) - spec.height) / 2 },
                         width: isEmptyAudioNode ? sourceNode.width : spec.width,
                         height: isEmptyAudioNode ? sourceNode.height : spec.height,
-                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, startedAt: generationStartedAt, progress: 0, audioTaskId: clientAudioTaskId, ...buildAudioGenerationMetadata(generationConfig) },
+                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, diagnosticTaskId, startedAt: generationStartedAt, progress: 0, audioTaskId: clientAudioTaskId, ...buildAudioGenerationMetadata(generationConfig) },
                     };
                     pendingChildIds = [audioId];
                     setNodes((prev) => (isEmptyAudioNode ? prev.map((node) => (node.id === nodeId ? { ...node, ...audioNode } : node)) : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode]));
                     if (!isEmptyAudioNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
+                    appendDiagnosticEvent(diagnosticTaskId, { stage: "request", status: "started", title: "开始提交音频请求" });
                     const task = await createCanvasAudioTask(generationConfig, effectivePrompt, { nodeId: audioId, sourceId: projectId, clientTaskId: clientAudioTaskId });
-                    setNodes((prev) => prev.map((node) => (node.id === audioId ? { ...node, metadata: { ...node.metadata, audioTaskId: task.id, audioTaskResultId: undefined, startedAt: parseCanvasTaskTime(task.started_at ?? task.startedAt ?? task.created_at ?? task.createdAt) || generationStartedAt, progress: task.progress || 0, errorDetails: undefined } } : node)));
+                    attachDiagnosticRemoteTaskId(diagnosticTaskId, task.id);
+                    appendDiagnosticEvent(diagnosticTaskId, { stage: "task", status: "success", title: "音频任务已创建", data: { remoteTaskId: task.id, status: task.status } });
+                    setNodes((prev) =>
+                        prev.map((node) =>
+                            node.id === audioId
+                                ? {
+                                      ...node,
+                                      metadata: {
+                                          ...node.metadata,
+                                          audioTaskId: task.id,
+                                          audioTaskResultId: undefined,
+                                          startedAt: parseCanvasTaskTime(task.started_at ?? task.startedAt ?? task.created_at ?? task.createdAt) || generationStartedAt,
+                                          progress: task.progress || 0,
+                                          errorDetails: undefined,
+                                      },
+                                  }
+                                : node,
+                        ),
+                    );
                     return;
                 }
 
@@ -2887,7 +3046,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         },
                         width: textConfig.width,
                         height: textConfig.height,
-                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, fontSize: 14 },
+                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, diagnosticTaskId, fontSize: 14 },
                     }));
                     setNodes((prev) => [...prev.map((node) => (node.id === nodeId && isConfigNode ? { ...node, metadata: { ...node.metadata, prompt: effectivePrompt, status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)), ...childNodes]);
                     setConnections((prev) => [...prev, ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: nodeId, toNodeId: childId }))]);
@@ -2916,8 +3075,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                     : node,
                     ),
                 );
+                appendDiagnosticEvent(diagnosticTaskId, { stage: "canvas", status: "success", title: "文本结果已写入画布", data: { resultCount: answers.length } });
+                finishDiagnosticTask(diagnosticTaskId, "success", "文本结果已返回并显示在画布中");
             } catch (error) {
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
+                appendDiagnosticEvent(diagnosticTaskId, { stage: "request", status: "failed", title: "生成任务失败", detail: errorDetails });
+                finishDiagnosticTask(diagnosticTaskId, "failed", errorDetails);
                 message.error(errorDetails);
                 setNodes((prev) =>
                     prev.map((node) => (node.id === nodeId || pendingChildIds.includes(node.id) ? (node.id === nodeId && !markSourceStatus ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } }) : node)),
@@ -2926,7 +3089,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, openConfigDialog],
+        [currentProject?.title, effectiveConfig, openConfigDialog, projectId],
     );
 
     const getCanvasAgentContext = useCallback(
@@ -3353,15 +3516,31 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         count: "1",
                     }
                     : { ...buildGenerationConfig(effectiveConfig, sourceNode, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image"), count: "1" };
+            const retryMode: DiagnosticMode = node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image";
+            const retryDiagnosticTaskId = startDiagnosticTask({
+                canvasId: projectId,
+                canvasTitle: currentProject?.title || "未命名画布",
+                nodeId: node.id,
+                mode: retryMode,
+                model: generationConfig.model,
+                channelMode: generationConfig.channelMode,
+                channelId: generationConfig.activeChannelId || "",
+                prompt: sourceNode.metadata?.prompt || node.metadata?.prompt || "",
+            });
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
+                appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "config", status: "failed", title: "重试配置不完整", detail: "缺少可用渠道、模型或 API Key" });
+                finishDiagnosticTask(retryDiagnosticTaskId, "failed", "重试配置不完整，尚未发送请求");
                 openConfigDialog(true);
                 return;
             }
+            appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "config", status: "success", title: "重试配置检查通过" });
 
             const context = hasSavedImageMetadata ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, sourceNode.metadata?.prompt || node.metadata?.prompt || ""));
             const prompt = (isPanorama ? savedImageMetadata?.panoramaFinalPrompt || "" : savedImageMetadata?.prompt || context?.prompt || "").trim();
             const requestPrompt = isPanorama ? prompt : applyCameraPrompt(prompt, savedImageMetadata?.cameraControl || node.metadata?.cameraControl);
             if (!prompt) {
+                appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "input", status: "failed", title: "找不到原始提示词" });
+                finishDiagnosticTask(retryDiagnosticTaskId, "failed", "找不到提示词，尚未发送请求");
                 message.warning("找不到提示词，无法重试");
                 return;
             }
@@ -3370,18 +3549,59 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const retryReferenceImages =
                 hasSavedImageMetadata && savedImageMetadata ? await resolveMetadataReferences(savedImageMetadata) : useReferenceImages ? (context?.referenceImages.length ? context.referenceImages : sourceNodeReferenceImages(batchRoot || sourceNode)) : [];
             if (useReferenceImages && !retryReferenceImages) {
+                appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "reference", status: "failed", title: "参考图片已丢失" });
+                finishDiagnosticTask(retryDiagnosticTaskId, "failed", "参考图片已丢失，无法继续重试");
                 message.error("参考图片已丢失，无法继续重试");
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: "参考图片已丢失，无法继续重试" } } : item)));
                 return;
             }
             const retryImages = retryReferenceImages || [];
+            const retryReferences = diagnosticReferencesFromContext(
+                context || {
+                    prompt,
+                    referenceImages: retryImages,
+                    firstFrame: null,
+                    lastFrame: null,
+                    referenceVideos: [],
+                    referenceAudios: [],
+                    videoMultiPrompt: [],
+                    videoElementList: [],
+                    textCount: 0,
+                    imageCount: retryImages.length,
+                    videoCount: 0,
+                    audioCount: 0,
+                },
+            );
+            updateDiagnosticReferences(retryDiagnosticTaskId, retryReferences);
+            appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "reference", status: "success", title: retryReferences.length ? "重试所需参考素材已读取" : "本次重试没有参考素材", data: { references: retryReferences } });
 
             setRunningNodeId(node.id);
             const retryStartedAt = Date.now();
             const retryVideoTaskId = node.type === CanvasNodeType.Video ? `client_video_task_${node.id}` : "";
             const retryImageTaskId = isCanvasImageNodeType(node.type) ? `client_image_task_${node.id}` : "";
             const retryAudioTaskId = node.type === CanvasNodeType.Audio ? `client_audio_task_${node.id}` : "";
-            setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, content: undefined, storageKey: "", progress: 0, startedAt: retryStartedAt, ...(item.type === CanvasNodeType.Video ? { videoTaskId: retryVideoTaskId, videoTaskVideoId: undefined } : {}), ...(isCanvasImageNodeType(item.type) ? { imageTaskId: retryImageTaskId, imageTaskResultId: undefined } : {}), ...(item.type === CanvasNodeType.Audio ? { audioTaskId: retryAudioTaskId, audioTaskResultId: undefined } : {}) } } : item)));
+            setNodes((prev) =>
+                prev.map((item) =>
+                    item.id === node.id
+                        ? {
+                              ...item,
+                              metadata: {
+                                  ...item.metadata,
+                                  status: NODE_STATUS_LOADING,
+                                  diagnosticTaskId: retryDiagnosticTaskId,
+                                  errorDetails: undefined,
+                                  content: undefined,
+                                  storageKey: "",
+                                  progress: 0,
+                                  startedAt: retryStartedAt,
+                                  ...(item.type === CanvasNodeType.Video ? { videoTaskId: retryVideoTaskId, videoTaskVideoId: undefined } : {}),
+                                  ...(isCanvasImageNodeType(item.type) ? { imageTaskId: retryImageTaskId, imageTaskResultId: undefined } : {}),
+                                  ...(item.type === CanvasNodeType.Audio ? { audioTaskId: retryAudioTaskId, audioTaskResultId: undefined } : {}),
+                              },
+                          }
+                        : item,
+                ),
+            );
 
             try {
                 if (node.type === CanvasNodeType.Text) {
@@ -3392,27 +3612,57 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
                     });
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: answer || streamed, prompt, status: NODE_STATUS_SUCCESS } } : item)));
+                    finishDiagnosticTask(retryDiagnosticTaskId, "success", "文本重试结果已显示在画布中");
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
                     const videoGenerationConfig = context ? withCanvasVideoAdvancedConfig(generationConfig, context) : generationConfig;
-                    const { references, firstFrame, lastFrame } = resolveCanvasVideoImageReferences(
-                        videoGenerationConfig.model,
-                        retryImages,
-                        context?.firstFrame,
-                        context?.lastFrame,
-                    );
-                    const created = await createVideoGenerationTask(videoGenerationConfig, requestPrompt, { references, firstFrame, lastFrame, videoReferences: context?.referenceVideos || [], audioReferences: context?.referenceAudios || [] }, undefined, { clientTaskId: retryVideoTaskId, source: "canvas", sourceId: node.id });
+                    const { references, firstFrame, lastFrame } = resolveCanvasVideoImageReferences(videoGenerationConfig.model, retryImages, context?.firstFrame, context?.lastFrame);
+                    const created = await createVideoGenerationTask(videoGenerationConfig, requestPrompt, { references, firstFrame, lastFrame, videoReferences: context?.referenceVideos || [], audioReferences: context?.referenceAudios || [] }, undefined, {
+                        clientTaskId: retryVideoTaskId,
+                        source: "canvas",
+                        sourceId: node.id,
+                        diagnosticTaskId: retryDiagnosticTaskId,
+                    });
+                    attachDiagnosticRemoteTaskId(retryDiagnosticTaskId, created.pollId);
+                    appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "task", status: "success", title: "视频重试任务已创建", data: { remoteTaskId: created.pollId, status: created.task.status } });
                     setNodes((prev) => applyCanvasVideoTaskUpdate(prev, node.id, created.task, created.pollId, videoGenerationConfig, retryStartedAt, { width: node.width, height: node.height }));
                     return;
                 }
                 if (node.type === CanvasNodeType.Audio) {
                     const task = await createCanvasAudioTask(generationConfig, prompt, { nodeId: node.id, sourceId: projectId, clientTaskId: retryAudioTaskId });
-                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, prompt, ...buildAudioGenerationMetadata(generationConfig), audioTaskId: task.id, audioTaskResultId: undefined, startedAt: parseCanvasTaskTime(task.started_at ?? task.startedAt ?? task.created_at ?? task.createdAt) || retryStartedAt, progress: task.progress || 0, errorDetails: undefined } } : item)));
+                    attachDiagnosticRemoteTaskId(retryDiagnosticTaskId, task.id);
+                    appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "task", status: "success", title: "音频重试任务已创建", data: { remoteTaskId: task.id, status: task.status } });
+                    setNodes((prev) =>
+                        prev.map((item) =>
+                            item.id === node.id
+                                ? {
+                                      ...item,
+                                      metadata: {
+                                          ...item.metadata,
+                                          prompt,
+                                          ...buildAudioGenerationMetadata(generationConfig),
+                                          audioTaskId: task.id,
+                                          audioTaskResultId: undefined,
+                                          startedAt: parseCanvasTaskTime(task.started_at ?? task.startedAt ?? task.created_at ?? task.createdAt) || retryStartedAt,
+                                          progress: task.progress || 0,
+                                          errorDetails: undefined,
+                                      },
+                                  }
+                                : item,
+                        ),
+                    );
                     return;
                 }
 
-                const task = await createCanvasImageTask({ ...generationConfig, quality: isPanorama && generationConfig.quality === "auto" ? "medium" : generationConfig.quality }, requestPrompt, useReferenceImages ? retryImages : [], { nodeId: node.id, sourceId: projectId, clientTaskId: retryImageTaskId });
+                const task = await createCanvasImageTask({ ...generationConfig, quality: isPanorama && generationConfig.quality === "auto" ? "medium" : generationConfig.quality }, requestPrompt, useReferenceImages ? retryImages : [], {
+                    nodeId: node.id,
+                    sourceId: projectId,
+                    clientTaskId: retryImageTaskId,
+                    diagnosticTaskId: retryDiagnosticTaskId,
+                });
+                attachDiagnosticRemoteTaskId(retryDiagnosticTaskId, task.id);
+                appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "task", status: "success", title: "图片重试任务已创建", data: { remoteTaskId: task.id, status: task.status } });
                 const generationMetadata = savedImageMetadata?.generationType
                     ? { generationType: savedImageMetadata.generationType, model: generationConfig.model, channelId: generationConfig.imageChannelId || generationConfig.activeChannelId, size: generationConfig.size, quality: generationConfig.quality, count: savedImageMetadata.count || 1, references: savedImageMetadata.references }
                     : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryImages);
@@ -3438,13 +3688,15 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 );
             } catch (error) {
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
+                appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "request", status: "failed", title: "重试任务失败", detail: errorDetails });
+                finishDiagnosticTask(retryDiagnosticTaskId, "failed", errorDetails);
                 message.error(errorDetails);
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, message, openConfigDialog, projectId],
+        [currentProject?.title, effectiveConfig, message, openConfigDialog, projectId],
     );
 
     const generateImageFromTextNode = useCallback(
@@ -4724,6 +4976,46 @@ function parseCanvasTaskTime(value: unknown) {
     if (Number.isFinite(numeric)) return numeric > 100000000000 ? numeric : numeric * 1000;
     const parsed = Date.parse(value);
     return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function diagnosticReferencesFromContext(context: NodeGenerationContext): DiagnosticReferenceSummary[] {
+    const result: Array<DiagnosticReferenceSummary | null> = [
+        diagnosticReferenceSummary("image", context.referenceImages),
+        diagnosticReferenceSummary("video", context.referenceVideos),
+        diagnosticReferenceSummary("audio", context.referenceAudios),
+        diagnosticReferenceSummary("first-frame", context.firstFrame ? [context.firstFrame] : []),
+        diagnosticReferenceSummary("last-frame", context.lastFrame ? [context.lastFrame] : []),
+    ];
+    return result.filter((item): item is DiagnosticReferenceSummary => Boolean(item));
+}
+
+function diagnosticReferenceSummary(kind: DiagnosticReferenceSummary["kind"], items: Array<{ bytes?: number; type?: string; mimeType?: string; dataUrl?: string; url?: string; storageKey?: string }>): DiagnosticReferenceSummary | null {
+    if (!items.length) return null;
+    const sources = new Set(
+        items.map((item) => {
+            const value = item.dataUrl || item.url || "";
+            if (/^https?:/i.test(value)) return "remote" as const;
+            if (value.startsWith("data:") || item.storageKey) return "local" as const;
+            return "mixed" as const;
+        }),
+    );
+    const totalBytes = items.reduce((sum, item) => {
+        if (item.bytes) return sum + item.bytes;
+        if (item.dataUrl?.startsWith("data:")) return sum + getDataUrlByteSize(item.dataUrl);
+        return sum;
+    }, 0);
+    return {
+        kind,
+        count: items.length,
+        totalBytes: totalBytes || undefined,
+        mimeTypes: [...new Set(items.map((item) => item.mimeType || item.type || "").filter(Boolean))],
+        source: sources.size === 1 ? Array.from(sources)[0] || "mixed" : "mixed",
+    };
+}
+
+function diagnosticProgressBucket(progress: unknown) {
+    const value = typeof progress === "number" && Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0;
+    return value >= 100 ? 100 : value >= 75 ? 75 : value >= 50 ? 50 : value >= 25 ? 25 : 0;
 }
 
 function canvasAgentNodeSummary(node: CanvasNodeData) {

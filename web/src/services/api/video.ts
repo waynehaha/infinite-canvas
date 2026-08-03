@@ -10,6 +10,7 @@ import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
 import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig, type VideoElementReference } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { appendDiagnosticEvent } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -49,7 +50,7 @@ type ApiVideoResponse = VideoResponse | ApiVideoEnvelope;
 export type VideoGenerationResult = { id: string; url: string; storageKey: string; durationMs: number; width: number; height: number; bytes: number; mimeType: string; task: VideoResponse };
 export type CreatedVideoGenerationTask = { task: VideoResponse; pollId: string; startedAt: number; requestBody: unknown };
 export type VideoProgressHandler = (progress: number, task: VideoResponse) => void;
-export type VideoTaskCreateOptions = { clientTaskId?: string; source?: "video-workbench" | "canvas"; sourceId?: string };
+export type VideoTaskCreateOptions = { clientTaskId?: string; source?: "video-workbench" | "canvas"; sourceId?: string; diagnosticTaskId?: string };
 export const VIDEO_POLL_INTERVAL_MS = 5000;
 const VIDEO_RESULT_DOWNLOAD_TIMEOUT_MS = 20_000;
 
@@ -124,10 +125,11 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] | VideoReferenceInput = [], onProgress?: VideoProgressHandler, options?: string | VideoTaskCreateOptions): Promise<CreatedVideoGenerationTask> {
     const model = config.model || config.videoModel;
     const systemPrompt = (config.systemPrompts.video || config.systemPrompt).trim();
+    const createOptions = normalizeVideoTaskCreateOptions(options);
     const body = await createVideoRequestBody(config, model, systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt, normalizeVideoReferenceInput(references));
+    appendDiagnosticEvent(createOptions.diagnosticTaskId, { stage: "request", status: "info", title: "视频请求已组装", data: summarizeDiagnosticRequestBody(body) });
     const startedAt = Date.now();
     try {
-        const createOptions = normalizeVideoTaskCreateOptions(options);
         const accountProxy = usesAccountProxy(config);
         const headers = {
             ...aiHeaders(config),
@@ -136,11 +138,19 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             ...(accountProxy && createOptions.sourceId ? { "X-Video-Task-Source-ID": createOptions.sourceId } : {}),
         };
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers })).data);
+        appendDiagnosticEvent(createOptions.diagnosticTaskId, { stage: "request", status: "success", title: "视频请求提交成功", data: { endpoint: "/videos", httpStatus: 200, durationMs: Date.now() - startedAt } });
         if (!created.id && !created.video_id) throw new Error("视频接口没有返回任务 ID");
         if (typeof created.progress === "number") onProgress?.(created.progress, created);
         return { task: created, pollId: videoPollId(model, created), startedAt, requestBody: body };
     } catch (error) {
         const { message, detail } = readAxiosError(error, "视频生成失败");
+        appendDiagnosticEvent(createOptions.diagnosticTaskId, {
+            stage: "request",
+            status: "failed",
+            title: "视频请求提交失败",
+            detail: message,
+            data: { endpoint: "/videos", httpStatus: axios.isAxiosError(error) ? error.response?.status || 0 : 0, durationMs: Date.now() - startedAt },
+        });
         void writeVideoAICallLog(config, model, "/videos", "POST", startedAt, axios.isAxiosError(error) ? error.response?.status || 0 : 0, stringifyLogPayload(summarizeVideoRequestBody(body)), stringifyLogPayload(detail), message);
         throw new VideoRequestError(message, detail);
     }
@@ -683,6 +693,37 @@ function summarizeVideoRequestBody(value: unknown) {
         return { fields, files };
     }
     return value;
+}
+
+function summarizeDiagnosticRequestBody(value: unknown) {
+    if (value instanceof FormData) {
+        const fields = new Map<string, { count: number; files: number; totalBytes: number; mimeTypes: Set<string> }>();
+        value.forEach((item, key) => {
+            const current = fields.get(key) || { count: 0, files: 0, totalBytes: 0, mimeTypes: new Set<string>() };
+            current.count += 1;
+            if (item instanceof File) {
+                current.files += 1;
+                current.totalBytes += item.size;
+                if (item.type) current.mimeTypes.add(item.type);
+            }
+            fields.set(key, current);
+        });
+        return {
+            bodyType: "form-data",
+            fields: Array.from(fields, ([name, item]) => ({ name, count: item.count, files: item.files, totalBytes: item.totalBytes, mimeTypes: Array.from(item.mimeTypes) })),
+        };
+    }
+    if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        return {
+            bodyType: "json",
+            fields: Object.keys(record),
+            referenceFields: Object.entries(record)
+                .filter(([key]) => /(image|video|audio|reference|frame)/i.test(key))
+                .map(([name, item]) => ({ name, valueType: Array.isArray(item) ? "array" : typeof item, count: Array.isArray(item) ? item.length : item == null || item === "" ? 0 : 1 })),
+        };
+    }
+    return { bodyType: typeof value };
 }
 
 function formatErrorDetail(detail: unknown) {
