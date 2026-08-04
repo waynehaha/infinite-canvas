@@ -1,6 +1,6 @@
 "use client";
 
-import { App, Badge, Button, Checkbox, Empty, Modal, Popconfirm, Select } from "antd";
+import { App, Button, Checkbox, Empty, Modal, Popconfirm, Select } from "antd";
 import { AlertTriangle, CheckCircle2, FileDown, FileSearch, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { saveAs } from "file-saver";
@@ -193,25 +193,12 @@ export function DiagnosticLogModal({ open, scopeId, scopeTitle, scopeLabel = "�
 
 export function WorkbenchDiagnosticLogButton({ scopeId, scopeTitle }: { scopeId: "image-workbench" | "video-workbench"; scopeTitle: string }) {
     const [open, setOpen] = useState(false);
-    const [attention, setAttention] = useState(false);
-
-    const refreshAttention = useCallback(async () => {
-        const [latest] = await listDiagnosticTasks(scopeId);
-        setAttention(latest?.status === "failed");
-    }, [scopeId]);
-
-    useEffect(() => {
-        void refreshAttention();
-        return subscribeDiagnosticTasks(() => void refreshAttention());
-    }, [refreshAttention]);
 
     return (
         <>
-            <Badge dot={attention} offset={[-2, 3]}>
-                <Button type="text" size="small" icon={<FileSearch className="size-3.5" />} onClick={() => setOpen(true)}>
-                    日志
-                </Button>
-            </Badge>
+            <Button type="text" size="small" icon={<FileSearch className="size-3.5" />} onClick={() => setOpen(true)}>
+                日志
+            </Button>
             <DiagnosticLogModal open={open} scopeId={scopeId} scopeTitle={scopeTitle} scopeLabel="工作台" onClose={() => setOpen(false)} />
         </>
     );

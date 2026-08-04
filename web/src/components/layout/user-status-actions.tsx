@@ -25,10 +25,9 @@ type UserStatusActionsProps = {
     accountRef?: RefObject<HTMLDivElement | null>;
     getPopupContainer?: (node: HTMLElement) => HTMLElement;
     onOpenDiagnostics?: () => void;
-    diagnosticAttention?: boolean;
 };
 
-export function UserStatusActions({ showConfig = true, variant = "default", onOpenShortcuts, accountOpen, onAccountOpenChange, accountRef, getPopupContainer, onOpenDiagnostics, diagnosticAttention = false }: UserStatusActionsProps) {
+export function UserStatusActions({ showConfig = true, variant = "default", onOpenShortcuts, accountOpen, onAccountOpenChange, accountRef, getPopupContainer, onOpenDiagnostics }: UserStatusActionsProps) {
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
     const user = useUserStore((state) => state.user);
@@ -64,7 +63,6 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
                 <button type="button" className="relative inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-xs font-medium text-stone-600 transition hover:bg-black/5 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-white/10 dark:hover:text-white" style={iconStyle} onClick={onOpenDiagnostics} aria-label="诊断日志" title="诊断日志">
                     <FileClock className="size-4" />
                     <span>日志</span>
-                    {diagnosticAttention ? <span className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-red-500" aria-label="最近任务失败" /> : null}
                 </button>
             ) : null}
             <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} className={naturalIconClass} style={iconStyle} aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} />

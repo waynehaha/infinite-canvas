@@ -83,6 +83,16 @@ test("生图与视频工作台在结果标题旁接入独立诊断范围", async
     assert.match(diagnosticService, /diagnosticTaskScope\(task\)\.id === scopeId/);
 });
 
+test("三个日志入口不显示异常红点", async () => {
+    const webRoot = new URL("../", import.meta.url);
+    const modal = await readFile(new URL("src/components/layout/diagnostic-log-modal.tsx", webRoot), "utf8");
+    const canvas = await readFile(new URL("src/app/(user)/canvas/[id]/canvas-client-page.tsx", webRoot), "utf8");
+    const userStatus = await readFile(new URL("src/components/layout/user-status-actions.tsx", webRoot), "utf8");
+    assert.doesNotMatch(modal, /Badge|attention/);
+    assert.doesNotMatch(canvas, /diagnosticAttention/);
+    assert.doesNotMatch(userStatus, /diagnosticAttention|最近任务失败/);
+});
+
 test("生图工作台记录结果不可显示异常并支持历史补充日志", async () => {
     const webRoot = new URL("../", import.meta.url);
     const imagePage = await readFile(new URL("src/app/(user)/image/page.tsx", webRoot), "utf8");

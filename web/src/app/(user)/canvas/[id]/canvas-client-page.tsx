@@ -12,7 +12,7 @@ import { createCanvasImageTask, pollCanvasImageTaskStatus, requestImageQuestion,
 import { createCanvasAudioTask, pollCanvasAudioTaskStatus, type CanvasAudioTask } from "@/services/api/audio";
 import { createVideoGenerationTask, pollVideoGenerationTaskStatus, VideoRequestError, VIDEO_POLL_INTERVAL_MS, type VideoResponse } from "@/services/api/video";
 import { resolveVideoTaskIds } from "@/services/api/video-polling";
-import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, diagnosticReferenceAssets, diagnosticReferenceSummary, finishDiagnosticTask, listDiagnosticTasks, registerDiagnosticReferenceAssets, startDiagnosticTask, subscribeDiagnosticTasks, updateDiagnosticReferences, type DiagnosticMode, type DiagnosticReferenceAsset, type DiagnosticReferenceSummary } from "@/services/diagnostic-log";
+import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, diagnosticReferenceAssets, diagnosticReferenceSummary, finishDiagnosticTask, registerDiagnosticReferenceAssets, startDiagnosticTask, updateDiagnosticReferences, type DiagnosticMode, type DiagnosticReferenceAsset, type DiagnosticReferenceSummary } from "@/services/diagnostic-log";
 import { defaultConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { collectImageStorageKeys, deleteStoredImages, resolveImageUrl, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
@@ -4471,17 +4471,6 @@ function CanvasTopBar({
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const [accountOpen, setAccountOpen] = useState(false);
     const [diagnosticOpen, setDiagnosticOpen] = useState(false);
-    const [diagnosticAttention, setDiagnosticAttention] = useState(false);
-
-    const refreshDiagnosticAttention = useCallback(async () => {
-        const [latest] = await listDiagnosticTasks(canvasId);
-        setDiagnosticAttention(latest?.status === "failed");
-    }, [canvasId]);
-
-    useEffect(() => {
-        void refreshDiagnosticAttention();
-        return subscribeDiagnosticTasks(() => void refreshDiagnosticAttention());
-    }, [refreshDiagnosticAttention]);
 
     useEffect(() => {
         if (!isTitleEditing) return;
@@ -4561,7 +4550,6 @@ function CanvasTopBar({
                     <UserStatusActions
                         variant="canvas"
                         onOpenDiagnostics={() => setDiagnosticOpen(true)}
-                        diagnosticAttention={diagnosticAttention}
                         accountOpen={accountOpen}
                         onAccountOpenChange={setAccountOpen}
                         accountRef={accountRef}
