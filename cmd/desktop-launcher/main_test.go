@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,5 +49,51 @@ func TestPrepareDataDirKeepsSecret(t *testing.T) {
 	}
 	if string(first) != string(second) || !strings.HasPrefix(string(first), "JWT_SECRET=") {
 		t.Fatal("JWT secret was not preserved")
+	}
+}
+
+func TestPersistentWebPortSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "desktop.json")
+	first, err := persistentWebPort(path, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := persistentWebPort(path, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("web port changed from %d to %d", first, second)
+	}
+}
+
+func TestPersistentWebPortInheritsLegacyState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "desktop.json")
+	legacy, err := availablePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := persistentWebPort(path, 0, legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port != legacy {
+		t.Fatalf("web port = %d, want %d", port, legacy)
+	}
+}
+
+func TestPersistentWebPortDoesNotReplaceOccupiedPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+	path := filepath.Join(t.TempDir(), "desktop.json")
+	if err := writeDesktopConfig(path, desktopConfig{WebPort: port}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := persistentWebPort(path, 0, 0); err == nil || !strings.Contains(err.Error(), "不会自动更换端口") {
+		t.Fatalf("expected occupied-port protection, got %v", err)
 	}
 }

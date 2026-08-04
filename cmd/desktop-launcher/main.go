@@ -25,6 +25,7 @@ type launcherOptions struct {
 	action      string
 	appDir      string
 	dataDir     string
+	webPort     int
 	noBrowser   bool
 	noDialog    bool
 	waitTimeout time.Duration
@@ -37,6 +38,10 @@ type launcherState struct {
 	WebPort   int       `json:"webPort"`
 	Version   string    `json:"version"`
 	StartedAt time.Time `json:"startedAt"`
+}
+
+type desktopConfig struct {
+	WebPort int `json:"webPort"`
 }
 
 func main() {
@@ -77,6 +82,7 @@ func parseOptions() (launcherOptions, error) {
 	flag.StringVar(&options.action, "action", actionFromExecutable(), "start, stop or status")
 	flag.StringVar(&options.appDir, "app-dir", "", "application bundle directory")
 	flag.StringVar(&options.dataDir, "data-dir", "", "application data directory")
+	flag.IntVar(&options.webPort, "web-port", 0, "persistent web port used to recover browser data")
 	flag.BoolVar(&options.noBrowser, "no-browser", false, "do not open the browser")
 	flag.BoolVar(&options.noDialog, "no-dialog", false, "do not show native dialogs")
 	flag.IntVar(&waitSeconds, "wait-timeout", 120, "startup timeout in seconds")
@@ -84,6 +90,9 @@ func parseOptions() (launcherOptions, error) {
 	options.action = strings.ToLower(strings.TrimSpace(options.action))
 	if options.action != "start" && options.action != "stop" && options.action != "status" {
 		return options, fmt.Errorf("不支持的操作：%s", options.action)
+	}
+	if options.webPort < 0 || options.webPort > 65535 {
+		return options, fmt.Errorf("网页端口必须在 1 到 65535 之间")
 	}
 	if waitSeconds < 5 {
 		waitSeconds = 5
@@ -135,13 +144,22 @@ func run(options launcherOptions) error {
 }
 
 func startServices(appDir string, dataDir string, statePath string, options launcherOptions) error {
+	configPath := filepath.Join(dataDir, "desktop.json")
+	legacyWebPort := 0
 	if state, _ := readState(statePath); state != nil {
 		if stateHealthy(*state) {
+			if options.webPort > 0 && options.webPort != state.WebPort {
+				return fmt.Errorf("软件正在端口 %d 运行，请先停止后再切换到端口 %d", state.WebPort, options.webPort)
+			}
+			if err := preserveWebPort(configPath, state.WebPort); err != nil {
+				return err
+			}
 			if !options.noBrowser {
 				return openBrowser(fmt.Sprintf("http://127.0.0.1:%d/", state.WebPort))
 			}
 			return nil
 		}
+		legacyWebPort = state.WebPort
 		_ = terminateState(*state)
 		_ = os.Remove(statePath)
 	}
@@ -153,11 +171,14 @@ func startServices(appDir string, dataDir string, statePath string, options laun
 	if err := prepareDataDir(dataDir); err != nil {
 		return err
 	}
-	ports, err := availablePorts(2)
+	webPort, err := persistentWebPort(configPath, options.webPort, legacyWebPort)
 	if err != nil {
 		return err
 	}
-	apiPort, webPort := ports[0], ports[1]
+	apiPort, err := availablePortExcept(webPort)
+	if err != nil {
+		return err
+	}
 
 	apiLog, err := openLog(filepath.Join(dataDir, "logs", "api.log"))
 	if err != nil {
@@ -195,11 +216,15 @@ func startServices(appDir string, dataDir string, statePath string, options laun
 
 	web := exec.Command(paths.node, "server.js")
 	web.Dir = paths.web
+	webOrigin := fmt.Sprintf("http://127.0.0.1:%d", webPort)
 	web.Env = withEnv(os.Environ(), map[string]string{
-		"NODE_ENV":     "production",
-		"HOSTNAME":     "127.0.0.1",
-		"PORT":         strconv.Itoa(webPort),
-		"API_BASE_URL": fmt.Sprintf("http://127.0.0.1:%d", apiPort),
+		"NODE_ENV":                    "production",
+		"HOSTNAME":                    "127.0.0.1",
+		"PORT":                        strconv.Itoa(webPort),
+		"API_BASE_URL":                fmt.Sprintf("http://127.0.0.1:%d", apiPort),
+		"INFINITE_CANVAS_APP_VERSION": readVersion(appDir),
+		"INFINITE_CANVAS_DATA_DIR":    dataDir,
+		"INFINITE_CANVAS_WEB_ORIGIN":  webOrigin,
 	})
 	web.Stdout, web.Stderr = webLog, webLog
 	configureDetachedProcess(web)
@@ -294,7 +319,7 @@ func resolveDataDir(value string) (string, error) {
 }
 
 func prepareDataDir(dataDir string) error {
-	for _, dir := range []string{filepath.Join(dataDir, "data"), filepath.Join(dataDir, "data", "prompts"), filepath.Join(dataDir, "logs"), filepath.Join(dataDir, "logs", "ai-calls"), filepath.Join(dataDir, "run")} {
+	for _, dir := range []string{filepath.Join(dataDir, "data"), filepath.Join(dataDir, "data", "prompts"), filepath.Join(dataDir, "logs"), filepath.Join(dataDir, "logs", "ai-calls"), filepath.Join(dataDir, "run"), filepath.Join(dataDir, "backups", "browser-data")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
@@ -311,6 +336,91 @@ func prepareDataDir(dataDir string) error {
 	}
 	content := "JWT_SECRET=" + base64.RawURLEncoding.EncodeToString(secret) + "\n"
 	return os.WriteFile(envPath, []byte(content), 0o600)
+}
+
+func persistentWebPort(configPath string, requested int, legacy int) (int, error) {
+	configured := 0
+	if data, err := os.ReadFile(configPath); err == nil {
+		var config desktopConfig
+		if json.Unmarshal(data, &config) == nil {
+			configured = config.WebPort
+		}
+	} else if !os.IsNotExist(err) {
+		return 0, err
+	}
+
+	port := requested
+	if port == 0 {
+		port = configured
+	}
+	if port == 0 {
+		port = legacy
+	}
+	if port == 0 {
+		var err error
+		port, err = availablePort()
+		if err != nil {
+			return 0, err
+		}
+	}
+	if port < 1 || port > 65535 {
+		return 0, fmt.Errorf("已保存的网页端口无效：%d", port)
+	}
+	if !portAvailable(port) {
+		return 0, fmt.Errorf("固定网页端口 %d 已被其他程序占用。请关闭占用程序后重试；为保护浏览器本地数据，软件不会自动更换端口", port)
+	}
+	if requested > 0 || configured == 0 {
+		if err := writeDesktopConfig(configPath, desktopConfig{WebPort: port}); err != nil {
+			return 0, err
+		}
+	}
+	return port, nil
+}
+
+func preserveWebPort(configPath string, port int) error {
+	if data, err := os.ReadFile(configPath); err == nil {
+		var config desktopConfig
+		if json.Unmarshal(data, &config) == nil && config.WebPort == port {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return writeDesktopConfig(configPath, desktopConfig{WebPort: port})
+}
+
+func writeDesktopConfig(path string, config desktopConfig) error {
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, path)
+}
+
+func portAvailable(port int) bool {
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = listener.Close()
+	return true
+}
+
+func availablePortExcept(excluded int) (int, error) {
+	for attempt := 0; attempt < 10; attempt++ {
+		port, err := availablePort()
+		if err != nil {
+			return 0, err
+		}
+		if port != excluded {
+			return port, nil
+		}
+	}
+	return 0, errors.New("无法分配独立的后端端口")
 }
 
 func availablePort() (int, error) {

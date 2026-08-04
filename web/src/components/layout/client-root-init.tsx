@@ -7,6 +7,7 @@ import { App } from "antd";
 
 import { fetchUserConfig } from "@/services/api/user-config";
 import { defaultUserStorageProvider, saveUserStorageProvider } from "@/services/image-storage";
+import { runDesktopDataProtection } from "@/services/desktop-data-protection";
 import { useConfigStore, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -24,6 +25,14 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const isLoginPage = pathname === "/login" || pathname === "/admin/login";
     const adminRemoteTokenRef = useRef("");
+
+    useEffect(() => {
+        void runDesktopDataProtection()
+            .then((restored) => {
+                if (restored) window.location.reload();
+            })
+            .catch((error) => console.error("Desktop data protection failed", error));
+    }, []);
 
     useEffect(() => {
         void loadPublicSettings();

@@ -73,6 +73,13 @@ jobs:
           Start-Sleep -Seconds 2
           if (Get-Process -Id $first.apiPid -ErrorAction SilentlyContinue) { throw "API process is still running" }
           if (Get-Process -Id $first.webPid -ErrorAction SilentlyContinue) { throw "Web process is still running" }
+          $restart = Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "start", "--app-dir", $bundle, "--data-dir", $data, "--no-browser", "--no-dialog", "--wait-timeout", "180" -PassThru
+          $restart.WaitForExit()
+          if ($restart.ExitCode -ne 0) { throw "Restart failed" }
+          $restarted = Get-Content "$data/run/state.json" -Raw | ConvertFrom-Json
+          if ($first.webPort -ne $restarted.webPort) { throw "Web port changed after restart" }
+          if (-not (Test-Path "$data/desktop.json")) { throw "Persistent desktop config was not created" }
+          Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "stop", "--app-dir", $bundle, "--data-dir", $data, "--no-dialog" -Wait
 
       - name: Build Windows installer
         shell: pwsh
@@ -104,11 +111,13 @@ jobs:
           }
           $state = Get-Content "$data/run/state.json" -Raw | ConvertFrom-Json
           Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$($state.webPort)/" -TimeoutSec 10 | Out-Null
+          "keep-after-uninstall" | Set-Content -Encoding ascii "$data/data/user-data-sentinel.txt"
           $stop = Start-Process -FilePath "$install/launcher.exe" -ArgumentList "--action", "stop", "--data-dir", $data, "--no-dialog" -PassThru
           $stop.WaitForExit()
           if ($stop.ExitCode -ne 0) { throw "Installed application failed to stop" }
           $uninstaller = Get-ChildItem "$install/unins*.exe" | Select-Object -First 1
           Start-Process $uninstaller.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait
+          if (-not (Test-Path "$data/data/user-data-sentinel.txt")) { throw "Uninstall removed user data" }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -173,6 +182,11 @@ jobs:
           sleep 2
           ! kill -0 "$first_api_pid" 2>/dev/null
           ! kill -0 "$first_web_pid" 2>/dev/null
+          "$bundle/launcher" --action start --app-dir "$bundle" --data-dir "$data" --no-browser --no-dialog --wait-timeout 180
+          restarted_web_port="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["webPort"])' "$data/run/state.json")"
+          test "$web_port" = "$restarted_web_port"
+          test -f "$data/desktop.json"
+          "$bundle/launcher" --action stop --app-dir "$bundle" --data-dir "$data" --no-dialog
 
       - name: Build and verify macOS DMG
         run: |
