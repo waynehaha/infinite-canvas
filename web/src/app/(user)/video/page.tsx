@@ -12,6 +12,7 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/c
 import { ModelPicker } from "@/components/model-picker";
 import { KlingV26WorkbenchPanel } from "@/app/(user)/video/components/kling-v26-workbench-panel";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
+import { WorkbenchDiagnosticLogButton } from "@/components/layout/diagnostic-log-modal";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
@@ -27,6 +28,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { normalizeLocalChannels, useConfigStore, useEffectiveConfig, type AiConfig, type VideoElementItem, type VideoElementReference } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, diagnosticReferenceSummary, finishDiagnosticTask, startDiagnosticTask } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -89,6 +91,7 @@ type GenerationLog = {
     error?: string;
     errorDetail?: string;
     lastPolledAt?: number;
+    diagnosticTaskId?: string;
 };
 
 type GenerationLogConfig = Pick<AiConfig, "channelMode" | "activeChannelId" | "videoChannelId" | "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoMode" | "videoNegativePrompt" | "videoMultiShot" | "videoShotType" | "videoMultiPrompt" | "videoElementList" | "videoGenerateAudio" | "videoWatermark" | "videoCharacterOrientation">;
@@ -674,13 +677,35 @@ export default function VideoPage() {
     };
 
     const submitGenerationSnapshot = async (snapshot: { text: string; model: string; config: AiConfig; references: ReferenceImage[]; firstFrame?: ReferenceImage | null; lastFrame?: ReferenceImage | null; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; taskCount: number }) => {
+        const diagnosticReferences = [
+            diagnosticReferenceSummary("image", snapshot.references),
+            diagnosticReferenceSummary("first-frame", snapshot.firstFrame ? [snapshot.firstFrame] : []),
+            diagnosticReferenceSummary("last-frame", snapshot.lastFrame ? [snapshot.lastFrame] : []),
+            diagnosticReferenceSummary("video", snapshot.videoReferences),
+            diagnosticReferenceSummary("audio", snapshot.audioReferences),
+        ].filter((item): item is NonNullable<typeof item> => Boolean(item));
+        const diagnosticTaskId = startDiagnosticTask({
+            scopeType: "video-workbench",
+            scopeId: "video-workbench",
+            scopeTitle: "视频创作台",
+            nodeId: `video_submission_${nanoid(10)}`,
+            mode: "video",
+            model: snapshot.model,
+            channelMode: snapshot.config.channelMode,
+            channelId: snapshot.config.videoChannelId || snapshot.config.activeChannelId || "",
+            prompt: snapshot.text,
+            references: diagnosticReferences,
+        });
+        appendDiagnosticEvent(diagnosticTaskId, { stage: "config", status: "success", title: "视频配置检查通过", data: { model: snapshot.model, count: snapshot.taskCount, size: snapshot.config.size, resolution: snapshot.config.vquality, seconds: snapshot.config.videoSeconds } });
+        appendDiagnosticEvent(diagnosticTaskId, { stage: "input", status: "success", title: "已收集视频生成输入", data: { taskCount: snapshot.taskCount } });
+        appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "success", title: diagnosticReferences.length ? "参考素材已读取" : "本次提交没有参考素材", data: diagnosticReferences.length ? { references: diagnosticReferences } : undefined });
         setRunning(true);
         setPreviewLog(null);
         setNow(Date.now());
         const pendingLogs = Array.from({ length: snapshot.taskCount }, () => {
             const clientTaskId = `client_video_task_${nanoid()}`;
             const task: VideoResponse = { id: clientTaskId, task_id: clientTaskId, model: snapshot.model, status: "queued", progress: 0, created_at: Date.now(), size: snapshot.config.size, seconds: snapshot.config.videoSeconds };
-            return buildLog({ prompt: snapshot.text, model: snapshot.model, config: snapshot.config, references: snapshot.references, firstFrame: snapshot.firstFrame, lastFrame: snapshot.lastFrame, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task, taskCount: snapshot.taskCount, lastPolledAt: Date.now() });
+            return buildLog({ prompt: snapshot.text, model: snapshot.model, config: snapshot.config, references: snapshot.references, firstFrame: snapshot.firstFrame, lastFrame: snapshot.lastFrame, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task, taskCount: snapshot.taskCount, lastPolledAt: Date.now(), diagnosticTaskId });
         });
         await Promise.all(pendingLogs.map((log) => logStore.setItem(log.id, serializeLog(log))));
         setLogs((value) => sortVideoLogs([...pendingLogs, ...value]));
@@ -694,6 +719,8 @@ export default function VideoPage() {
             setLogs(storedLogs);
             const createdCount = nextLogs.filter((item) => item.status === "生成中").length;
             const failedCount = nextLogs.filter((item) => item.status === "失败").length;
+            appendDiagnosticEvent(diagnosticTaskId, { stage: "task", status: createdCount === pendingLogs.length ? "success" : createdCount ? "warning" : "failed", title: "视频子任务创建完成", detail: `${createdCount}/${pendingLogs.length} 个子任务创建成功`, data: { requestedCount: pendingLogs.length, createdCount } });
+            await finishVideoDiagnosticGroup(diagnosticTaskId);
             createdCount ? message.success(`已创建 ${createdCount} 个视频任务`) : message.error("视频任务创建失败");
             if (failedCount) message.warning(`${failedCount} 个视频任务创建失败`);
         } finally {
@@ -705,7 +732,8 @@ export default function VideoPage() {
         try {
             const created = await createVideoGenerationTask(snapshot.config, snapshot.text, { references: snapshot.references, firstFrame: snapshot.firstFrame, lastFrame: snapshot.lastFrame, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences }, (progress) => {
                 setResults((value) => updateResultByLogId(value, pendingLog.id, { progress }));
-            }, { clientTaskId: pendingLog.task?.id, source: "video-workbench" });
+            }, { clientTaskId: pendingLog.task?.id, source: "video-workbench", diagnosticTaskId: pendingLog.diagnosticTaskId });
+            attachDiagnosticRemoteTaskId(pendingLog.diagnosticTaskId, created.pollId);
             const nextLog = { ...pendingLog, task: created.task, lastPolledAt: Date.now() };
             await saveGenerationLog(nextLog);
             setResults((value) => updateResultByLogId(value, pendingLog.id, { progress: created.task.progress, task: created.task, taskLogId: nextLog.id, lastPolledAt: nextLog.lastPolledAt }));
@@ -715,6 +743,7 @@ export default function VideoPage() {
             const nextLog = { ...pendingLog, status: "失败" as const, durationMs, lastPolledAt: Date.now(), error: errorMessage(error), errorDetail: errorDetail(error) };
             await saveGenerationLog(nextLog);
             await persistVideoLog(nextLog);
+            appendDiagnosticEvent(pendingLog.diagnosticTaskId, { stage: "request", status: "failed", title: "视频子任务创建失败", detail: nextLog.error, data: { childLogId: pendingLog.id } });
             setResults((value) => updateResultByLogId(value, pendingLog.id, { status: "failed", taskLogId: nextLog.id, error: nextLog.error, errorDetail: nextLog.errorDetail, durationMs }));
             return nextLog;
         }
@@ -1000,6 +1029,14 @@ export default function VideoPage() {
         await persistVideoLog(log);
     };
 
+    const finishVideoDiagnosticGroup = async (diagnosticTaskId: string) => {
+        const group = (await readStoredLogs()).filter((log) => log.diagnosticTaskId === diagnosticTaskId);
+        if (!group.length || group.some((log) => log.status === "生成中")) return;
+        const failedCount = group.filter((log) => log.status === "失败").length;
+        appendDiagnosticEvent(diagnosticTaskId, { stage: "result", status: failedCount ? "failed" : "success", title: failedCount ? "视频提交包含失败任务" : "视频提交全部完成", data: { taskCount: group.length, failedCount } });
+        finishDiagnosticTask(diagnosticTaskId, failedCount ? "failed" : "success", failedCount ? `${group.length - failedCount}/${group.length} 个视频子任务成功` : `已生成 ${group.length} 个视频`);
+    };
+
     const pollPendingLogOnce = async (log: GenerationLog, resumeConfig: AiConfig) => {
         pollingLogIdsRef.current.add(log.id);
         const startedAt = log.createdAt || Date.now();
@@ -1010,6 +1047,8 @@ export default function VideoPage() {
             if (isFailedVideoTask(task)) {
                 const nextLog = { ...baseLog, status: "失败" as const, error: task.error?.message || "视频生成失败", errorDetail: errorDetail(new VideoRequestError(task.error?.message || "视频生成失败", task)) };
                 await finalizeGenerationLog(nextLog);
+                appendDiagnosticEvent(log.diagnosticTaskId, { stage: "result", status: "failed", title: "视频子任务生成失败", detail: nextLog.error, data: { childLogId: log.id, remoteTaskId: task.id } });
+                if (log.diagnosticTaskId) await finishVideoDiagnosticGroup(log.diagnosticTaskId);
                 setResults((value) => updateResultByLogId(value, log.id, { status: "failed", task, error: nextLog.error, errorDetail: nextLog.errorDetail, durationMs: nextLog.durationMs, lastPolledAt: nextLog.lastPolledAt }));
                 return;
             }
@@ -1017,25 +1056,33 @@ export default function VideoPage() {
                 if (!task.video_url && !task.url) {
                     const nextLog = { ...baseLog, status: "失败" as const, error: "视频生成完成但没有返回视频地址", errorDetail: errorDetail(new VideoRequestError("视频生成完成但没有返回视频地址", task)) };
                     await finalizeGenerationLog(nextLog);
+                    appendDiagnosticEvent(log.diagnosticTaskId, { stage: "result", status: "failed", title: "视频结果地址缺失", detail: nextLog.error, data: { childLogId: log.id, remoteTaskId: task.id } });
+                    if (log.diagnosticTaskId) await finishVideoDiagnosticGroup(log.diagnosticTaskId);
                     setResults((value) => updateResultByLogId(value, log.id, { status: "failed", task, error: nextLog.error, errorDetail: nextLog.errorDetail, durationMs: nextLog.durationMs, lastPolledAt: nextLog.lastPolledAt }));
                     return;
                 }
                 const video = videoFromTaskResponse(task, durationMs);
                 const nextLog = { ...baseLog, status: "成功" as const, video, error: undefined, errorDetail: undefined };
                 await finalizeGenerationLog(nextLog);
+                appendDiagnosticEvent(log.diagnosticTaskId, { stage: "result", status: "success", title: "视频子任务已完成", data: { childLogId: log.id, remoteTaskId: task.id } });
+                if (log.diagnosticTaskId) await finishVideoDiagnosticGroup(log.diagnosticTaskId);
                 setResults((value) => value.filter((item) => item.taskLogId !== log.id && item.id !== log.id));
                 return;
             }
             await saveGenerationLog(baseLog);
+            appendDiagnosticEvent(log.diagnosticTaskId, { stage: "polling", status: "info", title: "视频子任务状态已更新", detail: task.status || "处理中", data: { childLogId: log.id, progress: task.progress, remoteTaskId: task.id } });
             setResults((value) => updateResultByLogId(value, log.id, { task, progress: task.progress, durationMs, lastPolledAt: baseLog.lastPolledAt }));
         } catch (error) {
             const nextLog = { ...log, durationMs: Date.now() - startedAt, lastPolledAt: Date.now(), error: errorMessage(error), errorDetail: errorDetail(error) };
             if (isTransientVideoPollError(error)) {
                 await saveGenerationLog({ ...nextLog, status: "生成中" });
+                appendDiagnosticEvent(log.diagnosticTaskId, { stage: "polling", status: "warning", title: "视频任务本次查询失败", detail: nextLog.error, data: { childLogId: log.id } });
                 setResults((value) => updateResultByLogId(value, log.id, { error: nextLog.error, errorDetail: nextLog.errorDetail, durationMs: nextLog.durationMs, lastPolledAt: nextLog.lastPolledAt }));
                 return;
             }
             await finalizeGenerationLog({ ...nextLog, status: "失败" });
+            appendDiagnosticEvent(log.diagnosticTaskId, { stage: "polling", status: "failed", title: "视频任务查询失败", detail: nextLog.error, data: { childLogId: log.id } });
+            if (log.diagnosticTaskId) await finishVideoDiagnosticGroup(log.diagnosticTaskId);
             setResults((value) => updateResultByLogId(value, log.id, { status: "failed", error: nextLog.error, errorDetail: nextLog.errorDetail, durationMs: nextLog.durationMs, lastPolledAt: nextLog.lastPolledAt }));
         } finally {
             pollingLogIdsRef.current.delete(log.id);
@@ -1887,6 +1934,7 @@ function ResultsPanel({
                     <h2 className="truncate text-xl font-semibold">全部成果</h2>
                     <Tag className="m-0">{totalCount}</Tag>
                     {pendingCount ? <Tag className="m-0 px-2 py-1">{pendingCount} 个生成中</Tag> : null}
+                    <WorkbenchDiagnosticLogButton scopeId="video-workbench" scopeTitle="视频创作台" />
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                     <Button size="small" icon={<Plus className="size-3.5" />} onClick={onCreateSession}>新建</Button>
@@ -2771,7 +2819,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
     };
 }
 
-function buildLog({ prompt, model, config, references, firstFrame, lastFrame, videoReferences, audioReferences, taskCount, durationMs, status, task, video, error, errorDetail, lastPolledAt }: { prompt: string; model: string; config: AiConfig; references: ReferenceImage[]; firstFrame?: ReferenceImage | null; lastFrame?: ReferenceImage | null; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; taskCount?: number; durationMs: number; status: GenerationLog["status"]; task?: VideoResponse; video?: GeneratedVideo; error?: string; errorDetail?: string; lastPolledAt?: number }): GenerationLog {
+function buildLog({ prompt, model, config, references, firstFrame, lastFrame, videoReferences, audioReferences, taskCount, durationMs, status, task, video, error, errorDetail, lastPolledAt, diagnosticTaskId }: { prompt: string; model: string; config: AiConfig; references: ReferenceImage[]; firstFrame?: ReferenceImage | null; lastFrame?: ReferenceImage | null; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; taskCount?: number; durationMs: number; status: GenerationLog["status"]; task?: VideoResponse; video?: GeneratedVideo; error?: string; errorDetail?: string; lastPolledAt?: number; diagnosticTaskId?: string }): GenerationLog {
     const logConfig = {
         channelMode: config.channelMode,
         activeChannelId: config.activeChannelId,
@@ -2815,6 +2863,7 @@ function buildLog({ prompt, model, config, references, firstFrame, lastFrame, vi
         error,
         errorDetail,
         lastPolledAt,
+        diagnosticTaskId,
     };
 }
 

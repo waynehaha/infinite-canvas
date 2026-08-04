@@ -33,6 +33,7 @@ import { saveAs } from "file-saver";
 import { ImageSettingsPanel, imageFormatLabel, imageQualityLabel, imageSizeLabel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
+import { WorkbenchDiagnosticLogButton } from "@/components/layout/diagnostic-log-modal";
 import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { getAIHubImageCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
@@ -52,6 +53,7 @@ import { deleteImageGenerationLogs, fetchImageGenerationLogs, saveImageGeneratio
 import { deleteStoredImages, imageToDataUrl, resolveImageUrl, uploadImage, uploadRemoteImageToServer } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, diagnosticReferenceSummary, ensureReconstructedDiagnosticTask, finishDiagnosticTask, startDiagnosticTask } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
 
 type GeneratedImage = {
@@ -114,6 +116,8 @@ type GenerationLog = {
     workflowTaskId?: string;
     task?: CanvasImageTask;
     lastPolledAt?: number;
+    diagnosticTaskId?: string;
+    availabilityIssue?: string;
 };
 
 type GenerationLogConfig = Pick<AiConfig, "channelMode" | "model" | "imageModel" | "activeChannelId" | "imageChannelId" | "quality" | "size" | "count" | "apiMode" | "streamImages" | "streamPartialImages" | "responseFormatB64Json" | "codexCli">;
@@ -221,6 +225,10 @@ export default function ImagePage() {
 
     useEffect(() => {
         logsRef.current = logs;
+    }, [logs]);
+
+    useEffect(() => {
+        void reportImageAvailabilityIssues(logs);
     }, [logs]);
 
 
@@ -430,7 +438,7 @@ export default function ImagePage() {
         await submitGenerationBatch(snapshot);
     };
 
-    const submitPersistentGenerationBatch = async (snapshot: RequestSnapshot) => {
+    const submitPersistentGenerationBatch = async (snapshot: RequestSnapshot, diagnosticTaskId: string) => {
         setPreviewLog(null);
         const taskCount = Math.max(1, Number(snapshot.displayConfig.count) || 1);
         const pendingLogs = Array.from({ length: taskCount }, (_, index) => {
@@ -453,6 +461,7 @@ export default function ImagePage() {
                 categoryIds: activeResultCategoryId ? [activeResultCategoryId] : [],
                 task,
                 lastPolledAt: Date.now(),
+                diagnosticTaskId,
             });
         });
         setResults((value) => mergePendingLogResults(value, pendingLogs));
@@ -460,6 +469,8 @@ export default function ImagePage() {
 
         const settled = await Promise.allSettled(pendingLogs.map((log, index) => createPersistentImageTask(log, snapshot, index, taskCount)));
         const createdCount = settled.filter((item) => item.status === "fulfilled").length;
+        appendDiagnosticEvent(diagnosticTaskId, { stage: "task", status: createdCount === pendingLogs.length ? "success" : createdCount ? "warning" : "failed", title: "图片子任务创建完成", detail: `${createdCount}/${pendingLogs.length} 个子任务创建成功`, data: { requestedCount: pendingLogs.length, createdCount } });
+        await finishImageDiagnosticGroup(diagnosticTaskId);
         if (createdCount) message.success(`已创建 ${createdCount} 个图片任务`);
         if (createdCount < pendingLogs.length) message.warning(`${pendingLogs.length - createdCount} 个图片任务创建失败`);
     };
@@ -470,8 +481,9 @@ export default function ImagePage() {
                 { ...snapshot.requestConfig, seedIndex: index, seedCount: taskCount, count: "1" } as AiConfig & { seedIndex?: number; seedCount?: number },
                 snapshot.text,
                 snapshot.references,
-                { source: "image-workbench", sourceId: pendingLog.id, clientTaskId: imageLogTaskId(pendingLog) },
+                { source: "image-workbench", sourceId: pendingLog.id, clientTaskId: imageLogTaskId(pendingLog), diagnosticTaskId: pendingLog.diagnosticTaskId },
             );
+            attachDiagnosticRemoteTaskId(pendingLog.diagnosticTaskId, task.id);
             const nextLog = { ...pendingLog, task, lastPolledAt: Date.now() };
             await saveLog(nextLog);
             setResults((value) => updateResultByLogId(value, pendingLog.id, { taskLogId: nextLog.id, task, progress: task.progress, lastPolledAt: nextLog.lastPolledAt }));
@@ -479,13 +491,30 @@ export default function ImagePage() {
         } catch (error) {
             const nextLog = { ...pendingLog, status: "失败" as const, durationMs: Date.now() - pendingLog.createdAt, failCount: 1, errors: [errorMessage(error)], errorDetails: [errorDetail(error)], lastPolledAt: Date.now() };
             await saveLog(nextLog);
+            appendDiagnosticEvent(pendingLog.diagnosticTaskId, { stage: "request", status: "failed", title: "图片子任务创建失败", detail: errorMessage(error), data: { childLogId: pendingLog.id } });
             setResults((value) => updateResultByLogId(value, pendingLog.id, { status: "failed", error: nextLog.errors[0], errorDetail: nextLog.errorDetails?.[0], durationMs: nextLog.durationMs, lastPolledAt: nextLog.lastPolledAt }));
             throw error;
         }
     };
     const submitGenerationBatch = async (snapshot: RequestSnapshot) => {
+        const reference = diagnosticReferenceSummary("image", snapshot.references);
+        const diagnosticTaskId = startDiagnosticTask({
+            scopeType: "image-workbench",
+            scopeId: "image-workbench",
+            scopeTitle: "生图工作台",
+            nodeId: `image_submission_${nanoid(10)}`,
+            mode: "image",
+            model: snapshot.displayConfig.imageModel || snapshot.displayConfig.model,
+            channelMode: snapshot.requestConfig.channelMode,
+            channelId: snapshot.requestConfig.imageChannelId || snapshot.requestConfig.activeChannelId || "",
+            prompt: snapshot.text,
+            references: reference ? [reference] : [],
+        });
+        appendDiagnosticEvent(diagnosticTaskId, { stage: "config", status: "success", title: "生图配置检查通过", data: { model: snapshot.requestConfig.model, count: snapshot.displayConfig.count, size: snapshot.displayConfig.size, quality: snapshot.displayConfig.quality } });
+        appendDiagnosticEvent(diagnosticTaskId, { stage: "input", status: "success", title: "已收集生图输入", data: { referenceCount: snapshot.references.length } });
+        appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "success", title: reference ? "参考图已读取" : "本次提交没有参考图", data: reference ? { references: [reference] } : undefined });
         if (usesBackendImageTasks(snapshot.requestConfig)) {
-            await submitPersistentGenerationBatch(snapshot);
+            await submitPersistentGenerationBatch(snapshot, diagnosticTaskId);
             return;
         }
         setPreviewLog(null);
@@ -505,7 +534,7 @@ export default function ImagePage() {
                         seedIndex: index,
                         seedCount: taskCount,
                     } as any,
-                });
+                }, diagnosticTaskId);
 
                 if (!image) {
                     throw new Error("接口没有返回图片");
@@ -534,9 +563,12 @@ export default function ImagePage() {
                         errors: [],
                         errorDetails: [],
                         categoryIds: activeResultCategoryId ? [activeResultCategoryId] : [],
+                        diagnosticTaskId,
                     }),
                 );
+                appendDiagnosticEvent(diagnosticTaskId, { stage: "result", status: "success", title: "图片子任务生成成功", data: { childIndex: index + 1, resultCount: 1 } });
                 message.success("图片已生成");
+                return true;
             } catch (err) {
                 const errMsg = errorMessage(err);
                 const errDetail = errorDetail(err);
@@ -556,16 +588,21 @@ export default function ImagePage() {
                         errors: [errMsg],
                         errorDetails: [errDetail],
                         categoryIds: activeResultCategoryId ? [activeResultCategoryId] : [],
+                        diagnosticTaskId,
                     }),
                 );
+                appendDiagnosticEvent(diagnosticTaskId, { stage: "result", status: "failed", title: "图片子任务生成失败", detail: errMsg, data: { childIndex: index + 1 } });
                 message.error(errMsg || "生成失败");
+                return false;
             } finally {
                 // 任务完成，从进行中状态移除
                 setResults((value) => value.filter((item) => item.id !== id));
             }
         });
 
-        await Promise.allSettled(tasks);
+        const outcomes = await Promise.all(tasks);
+        const successCount = outcomes.filter(Boolean).length;
+        finishDiagnosticTask(diagnosticTaskId, successCount === outcomes.length ? "success" : "failed", successCount === outcomes.length ? `已生成 ${successCount} 张图片` : `${successCount}/${outcomes.length} 个图片子任务成功`);
     };
 
     const downloadImage = async (image: GeneratedImage, index: number) => {
@@ -655,6 +692,11 @@ export default function ImagePage() {
         setLogs(nextLogs);
         await persistImageHistory(nextLogs, categories);
         if (previewLog?.id === log.id) setPreviewLog(nextLog);
+    };
+
+    const markLogImageDisplayError = (log: GenerationLog) => {
+        if (log.availabilityIssue) return;
+        setLogs((value) => value.map((item) => item.id === log.id ? { ...item, availabilityIssue: "图片地址存在，但浏览器加载失败" } : item));
     };
 
     const insertPickedAsset = async (payload: InsertAssetPayload) => {
@@ -791,6 +833,14 @@ export default function ImagePage() {
         await nextChain;
     };
 
+    const finishImageDiagnosticGroup = async (diagnosticTaskId: string) => {
+        const group = (await readStoredLogs()).filter((log) => log.diagnosticTaskId === diagnosticTaskId);
+        if (!group.length || group.some((log) => log.status === "生成中")) return;
+        const failedCount = group.filter((log) => log.status === "失败").length;
+        appendDiagnosticEvent(diagnosticTaskId, { stage: "result", status: failedCount ? "failed" : "success", title: failedCount ? "生图提交包含失败任务" : "生图提交全部完成", data: { taskCount: group.length, failedCount } });
+        finishDiagnosticTask(diagnosticTaskId, failedCount ? "failed" : "success", failedCount ? `${group.length - failedCount}/${group.length} 个图片子任务成功` : `已生成 ${group.length} 张图片`);
+    };
+
     const refreshLogs = async () => {
         const nextLogs = await readStoredLogs();
         setLogs(nextLogs);
@@ -856,18 +906,22 @@ export default function ImagePage() {
                     if (!task) {
                         const nextLog = { ...log, status: "失败" as const, durationMs: Date.now() - log.createdAt, failCount: 1, errors: ["图片任务不存在或未创建成功"], errorDetails: ["后端没有找到对应的图片任务"], lastPolledAt: Date.now() };
                         await saveLog(nextLog);
+                        appendDiagnosticEvent(log.diagnosticTaskId, { stage: "polling", status: "failed", title: "图片子任务不存在", detail: nextLog.errors[0], data: { childLogId: log.id } });
                         setResults((value) => updateResultByLogId(value, log.id, { status: "failed", error: nextLog.errors[0], errorDetail: nextLog.errorDetails?.[0], durationMs: nextLog.durationMs, lastPolledAt: nextLog.lastPolledAt }));
                         return;
                     }
                     const nextLog = imageLogFromTask(log, task);
                     await saveLog(nextLog);
                     if (nextLog.status === "生成中") {
+                        appendDiagnosticEvent(log.diagnosticTaskId, { stage: "polling", status: "info", title: "图片子任务状态已更新", detail: task.status || "处理中", data: { childLogId: log.id, progress: task.progress } });
                         setResults((value) => updateResultByLogId(value, log.id, { task, progress: task.progress, durationMs: nextLog.durationMs, lastPolledAt: nextLog.lastPolledAt }));
                     } else {
+                        appendDiagnosticEvent(log.diagnosticTaskId, { stage: "result", status: nextLog.status === "成功" ? "success" : "failed", title: nextLog.status === "成功" ? "图片子任务已完成" : "图片子任务生成失败", detail: nextLog.errors[0], data: { childLogId: log.id, remoteTaskId: task.id } });
                         setResults((value) => value.filter((item) => !imageResultMatchesLog(item, nextLog)));
                     }
                 }),
             );
+            for (const diagnosticTaskId of new Set(pendingLogs.map((log) => log.diagnosticTaskId).filter((id): id is string => Boolean(id)))) await finishImageDiagnosticGroup(diagnosticTaskId);
         } finally {
             pendingLogs.forEach((log) => pollingLogIdsRef.current.delete(log.id));
         }
@@ -986,10 +1040,10 @@ export default function ImagePage() {
         };
     };
 
-    const runGenerationTask = async (resultId: string, snapshot: RequestSnapshot) => {
+    const runGenerationTask = async (resultId: string, snapshot: RequestSnapshot, diagnosticTaskId?: string) => {
         const itemStartedAt = performance.now();
         try {
-            const result = snapshot.references.length ? await requestEdit(snapshot.requestConfig, snapshot.text, snapshot.references) : await requestGeneration(snapshot.requestConfig, snapshot.text);
+            const result = snapshot.references.length ? await requestEdit(snapshot.requestConfig, snapshot.text, snapshot.references, diagnosticTaskId) : await requestGeneration(snapshot.requestConfig, snapshot.text, diagnosticTaskId);
             const image = result[0];
             if (!image) throw new Error("接口没有返回图片");
             const meta = await readImageMeta(image.dataUrl);
@@ -1161,6 +1215,7 @@ export default function ImagePage() {
                             syncingImageIds={syncingImageIds}
                             onSyncResult={syncResultImage}
                             onSyncLog={syncLogImage}
+                            onLogImageDisplayError={markLogImageDisplayError}
                             onRetry={retryResult}
                         />
                     </>
@@ -1197,6 +1252,7 @@ export default function ImagePage() {
                             syncingImageIds={syncingImageIds}
                             onSyncResult={syncResultImage}
                             onSyncLog={syncLogImage}
+                            onLogImageDisplayError={markLogImageDisplayError}
                             onRetry={retryResult}
                         />
                         <WorkbenchPanel
@@ -1626,6 +1682,7 @@ function ResultsPanel({
     syncingImageIds,
     onSyncResult,
     onSyncLog,
+    onLogImageDisplayError,
     onRetry,
 }: {
     className?: string;
@@ -1658,6 +1715,7 @@ function ResultsPanel({
     syncingImageIds: string[];
     onSyncResult: (resultId: string, image: GeneratedImage, index: number) => void;
     onSyncLog: (log: GenerationLog, image: GeneratedImage, index: number) => void;
+    onLogImageDisplayError: (log: GenerationLog) => void;
     onRetry: (result: GenerationResult) => void;
 }) {
     const { message } = App.useApp();
@@ -1697,6 +1755,7 @@ function ResultsPanel({
                     <h2 className="truncate text-xl font-semibold">{activeCategory ? activeCategory.name : "全部结果"}</h2>
                     <Tag className="m-0">{totalCount}</Tag>
                     {pendingCount ? <Tag className="m-0 px-2 py-1">{pendingCount} 个生成中</Tag> : null}
+                    <WorkbenchDiagnosticLogButton scopeId="image-workbench" scopeTitle="生图工作台" />
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                     {activeCategory ? (
@@ -1771,6 +1830,7 @@ function ResultsPanel({
                             onSaveAsset={onSaveAsset}
                             syncing={syncingImageIds.includes(log.images.find((image) => Boolean(image.dataUrl))?.id || "")}
                             onSync={(image) => onSyncLog(log, image, index)}
+                            onImageDisplayError={() => onLogImageDisplayError(log)}
                         />
                     ))}
                 </div>
@@ -2043,6 +2103,7 @@ function HistoryLogCard({
     onSaveAsset,
     syncing,
     onSync,
+    onImageDisplayError,
 }: {
     log: GenerationLog;
     categories: GenerationCategory[];
@@ -2062,9 +2123,11 @@ function HistoryLogCard({
     onSaveAsset: (image: GeneratedImage, index: number) => void;
     syncing: boolean;
     onSync: (image: GeneratedImage) => void;
+    onImageDisplayError: () => void;
 }) {
     const displayImages = log.images.filter((image) => Boolean(image.dataUrl));
-    const firstImage = displayImages[0];
+    const [imageLoadFailed, setImageLoadFailed] = useState(false);
+    const firstImage = imageLoadFailed ? undefined : displayImages[0];
     const [expanded, setExpanded] = useState(false);
     const [categoryOpen, setCategoryOpen] = useState(false);
     const [categoryName, setCategoryName] = useState("");
@@ -2092,6 +2155,12 @@ function HistoryLogCard({
         return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
     }, [categoryOpen]);
 
+    useEffect(() => {
+        setImageLoadFailed(false);
+    }, [log.id, displayImages[0]?.dataUrl]);
+
+    const availabilityIssue = log.availabilityIssue || (imageLoadFailed ? "图片地址存在，但浏览器加载失败" : "");
+
     return (
         <div className={`overflow-hidden rounded-lg border bg-background dark:bg-stone-950 ${active ? "border-stone-900 dark:border-stone-100" : "border-stone-200 dark:border-stone-800"}`}>
             <div className="relative aspect-[4/3] bg-stone-100 dark:bg-stone-900">
@@ -2101,17 +2170,25 @@ function HistoryLogCard({
                 </div>
                 <div className="absolute right-1.5 top-1.5 z-10 flex gap-1">
                     {firstImage && !firstImage.storageKey?.startsWith("server:") ? <Tag className="m-0 text-[10px]" color="gold">临时URL</Tag> : null}
-                    <Tag className="m-0 text-[10px]" color={log.status === "生成中" ? "processing" : log.failCount ? "red" : "blue"}>
-                        {log.status === "生成中" ? "生成中" : log.failCount ? `失败 ${log.failCount}` : "成功"}
+                    <Tag className="m-0 text-[10px]" color={log.status === "生成中" ? "processing" : availabilityIssue || log.failCount ? "red" : "blue"}>
+                        {log.status === "生成中" ? "生成中" : availabilityIssue ? "异常" : log.failCount ? `失败 ${log.failCount}` : "成功"}
                     </Tag>
                     <Tag className="m-0 text-[10px]">{log.imageCount} 张</Tag>
                 </div>
                 {firstImage ? (
-                    <Image src={firstImage.dataUrl} alt={`历史结果 ${index + 1}`} className="aspect-[4/3] object-cover" />
+                    <Image
+                        src={firstImage.dataUrl}
+                        alt={`历史结果 ${index + 1}`}
+                        className="aspect-[4/3] object-cover"
+                        onError={() => {
+                            setImageLoadFailed(true);
+                            onImageDisplayError();
+                        }}
+                    />
                 ) : (
                     <div className="flex size-full flex-col items-center justify-center gap-2 p-5 text-center text-sm text-red-500">
                         <AlertCircle className="size-7" />
-                        <span>{log.errors[0] || "没有可显示的图片"}</span>
+                        <span>{availabilityIssue || log.errors[0] || "没有可显示的图片"}</span>
                     </div>
                 )}
                 {displayImages.length > 1 ? (
@@ -2346,6 +2423,8 @@ function mergeLogIdentityData(primary: GenerationLog, duplicate: GenerationLog) 
         failCount: primary.failCount || duplicate.failCount,
         errors: primary.errors.length ? primary.errors : duplicate.errors,
         errorDetails: primary.errorDetails?.length ? primary.errorDetails : duplicate.errorDetails,
+        diagnosticTaskId: primary.diagnosticTaskId || duplicate.diagnosticTaskId,
+        availabilityIssue: primary.availabilityIssue || duplicate.availabilityIssue,
     };
 }
 
@@ -2538,6 +2617,49 @@ async function readStoredCategories() {
     }
 }
 
+async function reportImageAvailabilityIssues(logs: GenerationLog[]) {
+    const abnormalLogs = logs.filter((log) => log.status === "成功" && Boolean(log.availabilityIssue));
+    for (const log of abnormalLogs) {
+        const issue = log.availabilityIssue || "生成结果不可显示";
+        const reference = diagnosticReferenceSummary("image", log.references);
+        const remoteTaskId = imageLogTaskId(log);
+        const data = {
+            sourceRecordId: log.id,
+            expectedImageCount: log.imageCount || log.successCount || 0,
+            availableImageCount: log.images.filter((image) => Boolean(image.dataUrl)).length,
+            hasRemoteTask: Boolean(remoteTaskId),
+        };
+        if (log.diagnosticTaskId) {
+            appendDiagnosticEvent(log.diagnosticTaskId, {
+                stage: "storage",
+                status: "failed",
+                title: "生成结果不可显示",
+                detail: issue,
+                data,
+                dedupeKey: `image-availability:${log.id}`,
+            });
+            finishDiagnosticTask(log.diagnosticTaskId, "failed", "请求可能已经成功，但图片保存、读取或页面展示阶段出现异常");
+            continue;
+        }
+        await ensureReconstructedDiagnosticTask({
+            sourceRecordId: log.id,
+            scopeType: "image-workbench",
+            scopeId: "image-workbench",
+            scopeTitle: "生图工作台",
+            mode: "image",
+            model: log.model,
+            channelMode: log.config.channelMode,
+            channelId: log.config.imageChannelId || log.config.activeChannelId || "",
+            prompt: log.prompt,
+            createdAt: log.createdAt,
+            remoteTaskIds: remoteTaskId ? [remoteTaskId] : [],
+            references: reference ? [reference] : [],
+            issue,
+            data,
+        });
+    }
+}
+
 async function replaceStoredImageHistory(logs: GenerationLog[], categories: GenerationCategory[]) {
     if (typeof window === "undefined") return;
     await logStore.clear();
@@ -2632,6 +2754,9 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     );
     const visibleImages = images.filter((image) => Boolean(image.dataUrl));
     const config = normalizeLogConfig(log);
+    const availabilityIssue = log.status === "成功" && !visibleImages.length
+        ? log.availabilityIssue || (images.length ? "图片已经生成，但保存的图片当前无法读取" : "生成记录显示成功，但没有保存可显示的图片")
+        : undefined;
     return {
         id: log.id || nanoid(),
         createdAt: log.createdAt || Date.now(),
@@ -2659,6 +2784,8 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         workflowTaskId: log.workflowTaskId,
         task: log.task,
         lastPolledAt: log.lastPolledAt,
+        diagnosticTaskId: log.diagnosticTaskId,
+        availabilityIssue,
     };
 }
 
@@ -2770,6 +2897,7 @@ function buildLog({
     lastPolledAt,
     createdAt,
     time,
+    diagnosticTaskId,
 }: {
     id?: string;
     prompt: string;
@@ -2791,6 +2919,7 @@ function buildLog({
     lastPolledAt?: number;
     createdAt?: number;
     time?: string;
+    diagnosticTaskId?: string;
 }): GenerationLog {
     const logConfig = config;
     const logCreatedAt = createdAt || Date.now();
@@ -2820,14 +2949,10 @@ function buildLog({
         workflowInputs,
         task,
         lastPolledAt,
+        diagnosticTaskId,
     };
 }
 
 function formatLogTime(value: number) {
     return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
-
-
-
-
-

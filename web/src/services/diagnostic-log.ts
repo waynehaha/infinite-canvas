@@ -6,6 +6,7 @@ import { diagnosticExportLooksSafe, diagnosticTextStats, prepareDiagnosticValue,
 import { createZip } from "@/lib/zip";
 
 export type DiagnosticMode = "image" | "video" | "audio" | "text" | "workflow";
+export type DiagnosticScopeType = "canvas" | "image-workbench" | "video-workbench";
 export type DiagnosticStatus = "running" | "success" | "failed";
 export type DiagnosticEventStatus = "started" | "success" | "warning" | "failed" | "info";
 export type DiagnosticStage = "config" | "input" | "reference" | "request" | "task" | "polling" | "result" | "storage" | "canvas";
@@ -26,11 +27,15 @@ export type DiagnosticEvent = {
     title: string;
     detail?: string;
     data?: Record<string, unknown>;
+    dedupeKey?: string;
 };
 
 export type DiagnosticTask = {
     schemaVersion: 1;
     id: string;
+    scopeType?: DiagnosticScopeType;
+    scopeId?: string;
+    scopeTitle?: string;
     canvasId: string;
     canvasTitle: string;
     nodeId: string;
@@ -46,9 +51,16 @@ export type DiagnosticTask = {
     remoteTaskIds: string[];
     references: DiagnosticReferenceSummary[];
     events: DiagnosticEvent[];
+    reconstructed?: boolean;
+    sourceRecordId?: string;
 };
 
-type StartDiagnosticTaskInput = Pick<DiagnosticTask, "canvasId" | "canvasTitle" | "nodeId" | "mode" | "model" | "channelMode" | "channelId" | "prompt"> & {
+type StartDiagnosticTaskInput = Pick<DiagnosticTask, "nodeId" | "mode" | "model" | "channelMode" | "channelId" | "prompt"> & {
+    scopeType?: DiagnosticScopeType;
+    scopeId?: string;
+    scopeTitle?: string;
+    canvasId?: string;
+    canvasTitle?: string;
     references?: DiagnosticReferenceSummary[];
 };
 
@@ -62,11 +74,17 @@ const DIAGNOSTIC_TASKS_CHANGED_EVENT = "infinite-canvas:diagnostic-tasks-changed
 export function startDiagnosticTask(input: StartDiagnosticTaskInput) {
     const id = `diagnostic_${nanoid(12)}`;
     const now = Date.now();
+    const scopeType = input.scopeType || "canvas";
+    const scopeId = input.scopeId || input.canvasId || scopeType;
+    const scopeTitle = input.scopeTitle || input.canvasTitle || diagnosticScopeTypeLabel(scopeType);
     const task: DiagnosticTask = {
         schemaVersion: 1,
         id,
-        canvasId: input.canvasId,
-        canvasTitle: input.canvasTitle || "未命名画布",
+        scopeType,
+        scopeId,
+        scopeTitle,
+        canvasId: input.canvasId || (scopeType === "canvas" ? scopeId : ""),
+        canvasTitle: input.canvasTitle || (scopeType === "canvas" ? scopeTitle : ""),
         nodeId: input.nodeId,
         mode: input.mode,
         model: input.model,
@@ -94,6 +112,7 @@ export function appendDiagnosticEvent(taskId: string | undefined, event: Omit<Di
         const task = await diagnosticStore.getItem<DiagnosticTask>(taskId);
         if (!task) return;
         const nextEvent = { ...event, id: nanoid(10), at: Date.now(), data: prepareDiagnosticValue(event.data) as Record<string, unknown> | undefined };
+        if (nextEvent.dedupeKey && task.events.some((item) => item.dedupeKey === nextEvent.dedupeKey)) return;
         const previous = task.events[task.events.length - 1];
         if (previous && diagnosticEventFingerprint(previous) === diagnosticEventFingerprint(nextEvent)) return;
         task.events = [...task.events.slice(-(MAX_EVENTS - 1)), nextEvent];
@@ -133,6 +152,7 @@ export function finishDiagnosticTask(taskId: string | undefined, status: Exclude
     enqueueTask(taskId, async () => {
         const task = await diagnosticStore.getItem<DiagnosticTask>(taskId);
         if (!task) return;
+        if (task.status === status && task.completedAt) return;
         const now = Date.now();
         task.status = status;
         task.updatedAt = now;
@@ -143,20 +163,77 @@ export function finishDiagnosticTask(taskId: string | undefined, status: Exclude
     });
 }
 
-export async function listDiagnosticTasks(canvasId?: string) {
+export type ReconstructedDiagnosticTaskInput = {
+    sourceRecordId: string;
+    scopeType: Exclude<DiagnosticScopeType, "canvas">;
+    scopeId: string;
+    scopeTitle: string;
+    mode: DiagnosticMode;
+    model: string;
+    channelMode: string;
+    channelId: string;
+    prompt: string;
+    createdAt: number;
+    remoteTaskIds?: string[];
+    references?: DiagnosticReferenceSummary[];
+    issue: string;
+    data?: Record<string, unknown>;
+};
+
+export async function ensureReconstructedDiagnosticTask(input: ReconstructedDiagnosticTaskInput) {
+    const id = reconstructedTaskId(input.scopeId, input.sourceRecordId, input.createdAt);
+    const queued = enqueueTask(id, async () => {
+        const existing = await diagnosticStore.getItem<DiagnosticTask>(id);
+        if (existing) return;
+        const now = Date.now();
+        const task: DiagnosticTask = {
+            schemaVersion: 1,
+            id,
+            scopeType: input.scopeType,
+            scopeId: input.scopeId,
+            scopeTitle: input.scopeTitle,
+            canvasId: "",
+            canvasTitle: "",
+            nodeId: input.sourceRecordId,
+            mode: input.mode,
+            model: input.model,
+            channelMode: input.channelMode,
+            channelId: input.channelId,
+            prompt: input.prompt,
+            status: "failed",
+            createdAt: input.createdAt,
+            updatedAt: now,
+            completedAt: now,
+            remoteTaskIds: (input.remoteTaskIds || []).filter(Boolean).slice(-20),
+            references: input.references || [],
+            reconstructed: true,
+            sourceRecordId: input.sourceRecordId,
+            events: [
+                eventOf("config", "warning", "历史补充日志", "该记录由已有生成记录还原，不包含当时完整的请求时间线和请求体"),
+                { ...eventOf("storage", "failed", "生成结果不可显示", input.issue), data: prepareDiagnosticValue(input.data) as Record<string, unknown> | undefined },
+            ],
+        };
+        await diagnosticStore.setItem(id, task);
+        notifyDiagnosticTasksChanged();
+    });
+    await queued;
+    return id;
+}
+
+export async function listDiagnosticTasks(scopeId?: string) {
     await Promise.all(taskQueues.values());
     const tasks: DiagnosticTask[] = [];
     await diagnosticStore.iterate<DiagnosticTask, void>((task) => {
-        if (task?.schemaVersion === 1 && (!canvasId || task.canvasId === canvasId)) tasks.push(task);
+        if (task?.schemaVersion === 1 && (!scopeId || diagnosticTaskScope(task).id === scopeId)) tasks.push(task);
     });
     return [...tasks].sort((a, b) => b.createdAt - a.createdAt);
 }
 
-export async function clearDiagnosticTasks(canvasId?: string) {
-    if (!canvasId) {
+export async function clearDiagnosticTasks(scopeId?: string) {
+    if (!scopeId) {
         await diagnosticStore.clear();
     } else {
-        const tasks = await listDiagnosticTasks(canvasId);
+        const tasks = await listDiagnosticTasks(scopeId);
         await Promise.all(tasks.map((task) => diagnosticStore.removeItem(task.id)));
     }
     notifyDiagnosticTasksChanged();
@@ -173,7 +250,7 @@ export async function createDiagnosticExport(taskId: string) {
     const task = tasks.find((item) => item.id === taskId);
     if (!task) throw new Error("找不到所选诊断任务");
     const nearby = tasks
-        .filter((item) => item.canvasId === task.canvasId && item.id !== task.id)
+        .filter((item) => diagnosticTaskScope(item).id === diagnosticTaskScope(task).id && item.id !== task.id)
         .slice(0, 4)
         .map(taskSummary);
     const safeTask = sanitizeDiagnosticValue({ ...task, prompt: task.prompt }, true);
@@ -211,6 +288,16 @@ function enqueueTask(taskId: string, mutate: () => Promise<void>) {
     void next.finally(() => {
         if (taskQueues.get(taskId) === next) taskQueues.delete(taskId);
     });
+    return next;
+}
+
+function reconstructedTaskId(scopeId: string, sourceRecordId: string, createdAt: number) {
+    let hash = 2166136261;
+    for (const char of `${scopeId}:${sourceRecordId}`) {
+        hash ^= char.charCodeAt(0);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `diagnostic_reconstructed_${createdAt}_${(hash >>> 0).toString(36)}`;
 }
 
 async function pruneDiagnosticTasks() {
@@ -237,6 +324,7 @@ function buildDiagnosticSummary(task: DiagnosticTask) {
     const failedEvent = [...task.events].reverse().find((event) => event.status === "failed");
     const diagnosis = classifyDiagnosticFailure(failedEvent);
     const promptStats = diagnosticTextStats(task.prompt);
+    const scope = diagnosticTaskScope(task);
     const lines = [
         "AI 创作工作台诊断日志",
         "",
@@ -247,8 +335,9 @@ function buildDiagnosticSummary(task: DiagnosticTask) {
         "- 包含提示词正文，疑似密钥等敏感信息已自动隐藏。",
         "",
         "任务摘要",
+        ...(task.reconstructed ? ["- 日志来源：根据历史生成记录补充，信息可能不完整"] : []),
         `- 任务编号：${task.id}`,
-        `- 画布：${task.canvasTitle}（${task.canvasId}）`,
+        `- ${scope.type === "canvas" ? "画布" : "来源"}：${scope.title}（${scope.id}）`,
         `- 类型：${modeLabel(task.mode)}`,
         `- 模型：${task.model || "未确定"}`,
         `- 状态：${statusLabel(task.status)}`,
@@ -266,6 +355,38 @@ function buildDiagnosticSummary(task: DiagnosticTask) {
         ...task.events.map((event) => `- ${new Date(event.at).toLocaleTimeString("zh-CN", { hour12: false })} [${eventStatusLabel(event.status)}] ${event.title}${event.detail ? `：${event.detail}` : ""}`),
     ];
     return sanitizeDiagnosticValue(lines.join("\n"), true) as string;
+}
+
+export function diagnosticReferenceSummary(kind: DiagnosticReferenceSummary["kind"], items: Array<{ bytes?: number; type?: string; mimeType?: string; dataUrl?: string; url?: string; storageKey?: string }>): DiagnosticReferenceSummary | null {
+    if (!items.length) return null;
+    const sources = new Set(
+        items.map((item) => {
+            const value = item.dataUrl || item.url || "";
+            if (/^https?:/i.test(value)) return "remote" as const;
+            if (value.startsWith("data:") || item.storageKey) return "local" as const;
+            return "mixed" as const;
+        }),
+    );
+    const totalBytes = items.reduce((sum, item) => sum + (item.bytes || 0), 0);
+    return {
+        kind,
+        count: items.length,
+        totalBytes: totalBytes || undefined,
+        mimeTypes: [...new Set(items.map((item) => item.mimeType || item.type || "").filter(Boolean))],
+        source: sources.size === 1 ? Array.from(sources)[0] || "mixed" : "mixed",
+    };
+}
+
+function diagnosticTaskScope(task: DiagnosticTask) {
+    return {
+        type: task.scopeType || "canvas",
+        id: task.scopeId || task.canvasId,
+        title: task.scopeTitle || task.canvasTitle || "未命名画布",
+    };
+}
+
+function diagnosticScopeTypeLabel(scopeType: DiagnosticScopeType) {
+    return ({ canvas: "未命名画布", "image-workbench": "生图工作台", "video-workbench": "视频创作台" } as const)[scopeType];
 }
 
 function classifyDiagnosticFailure(event?: DiagnosticEvent) {

@@ -44,6 +44,41 @@ test("诊断导出固定包含提示词并在界面明确说明安全范围", as
     assert.match(service, /sanitizeDiagnosticValue\(\{ \.\.\.task, prompt: task\.prompt \}, true\)/);
 });
 
+test("生图与视频工作台在结果标题旁接入独立诊断范围", async () => {
+    const webRoot = new URL("../", import.meta.url);
+    const imagePage = await readFile(new URL("src/app/(user)/image/page.tsx", webRoot), "utf8");
+    const videoPage = await readFile(new URL("src/app/(user)/video/page.tsx", webRoot), "utf8");
+    const diagnosticService = await readFile(new URL("src/services/diagnostic-log.ts", webRoot), "utf8");
+    assert.match(imagePage, /<WorkbenchDiagnosticLogButton scopeId="image-workbench" scopeTitle="生图工作台" \/>/);
+    assert.match(videoPage, /<WorkbenchDiagnosticLogButton scopeId="video-workbench" scopeTitle="视频创作台" \/>/);
+    assert.match(imagePage, /scopeType: "image-workbench"/);
+    assert.match(videoPage, /scopeType: "video-workbench"/);
+    assert.match(imagePage, /diagnosticTaskId: pendingLog\.diagnosticTaskId/);
+    assert.match(videoPage, /diagnosticTaskId: pendingLog\.diagnosticTaskId/);
+    assert.match(diagnosticService, /diagnosticTaskScope\(task\)\.id === scopeId/);
+});
+
+test("生图工作台记录结果不可显示异常并支持历史补充日志", async () => {
+    const webRoot = new URL("../", import.meta.url);
+    const imagePage = await readFile(new URL("src/app/(user)/image/page.tsx", webRoot), "utf8");
+    const diagnosticService = await readFile(new URL("src/services/diagnostic-log.ts", webRoot), "utf8");
+    assert.match(imagePage, /diagnosticTaskId: log\.diagnosticTaskId/);
+    assert.match(imagePage, /availabilityIssue/);
+    assert.match(imagePage, /ensureReconstructedDiagnosticTask/);
+    assert.match(imagePage, /dedupeKey: `image-availability:/);
+    assert.match(diagnosticService, /历史补充日志/);
+    assert.match(diagnosticService, /reconstructed: true/);
+});
+
+test("安全说明只用黄色强调标题并使用中性容器", async () => {
+    const webRoot = new URL("../", import.meta.url);
+    const modal = await readFile(new URL("src/components/layout/diagnostic-log-modal.tsx", webRoot), "utf8");
+    assert.match(modal, /text-amber-500 dark:text-amber-400/);
+    assert.match(modal, /font-medium text-amber-600 dark:text-amber-400/);
+    assert.match(modal, /border-stone-200 bg-stone-50\/80/);
+    assert.match(modal, /text-stone-600 dark:text-stone-400/);
+});
+
 test("请求体保留完整参数结构并按开关处理提示词", () => {
     const snapshot = createDiagnosticRequestSnapshot({
         model: "gpt-image-2",

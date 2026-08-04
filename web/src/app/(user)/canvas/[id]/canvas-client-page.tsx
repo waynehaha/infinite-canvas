@@ -4601,7 +4601,7 @@ function CanvasTopBar({
                     <Shortcut keys={["拖入图片/视频/音频"]} value="上传到画布" />
                 </div>
             </Modal>
-            <DiagnosticLogModal open={diagnosticOpen} canvasId={canvasId} canvasTitle={title} onClose={() => setDiagnosticOpen(false)} />
+            <DiagnosticLogModal open={diagnosticOpen} scopeId={canvasId} scopeTitle={title} onClose={() => setDiagnosticOpen(false)} />
         </>
     );
 }

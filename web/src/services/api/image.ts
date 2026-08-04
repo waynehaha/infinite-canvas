@@ -876,9 +876,9 @@ async function requestImages(config: AiConfig & { seedIndex?: number; seedCount?
     return references.length ? requestImageEditSingle(config, prompt, references, params, diagnosticTaskId) : requestImageGenerationSingle(config, prompt, params, diagnosticTaskId);
 }
 
-export async function requestGeneration(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string) {
+export async function requestGeneration(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, diagnosticTaskId?: string) {
     try {
-        const images = await requestImages(config, prompt, []);
+        const images = await requestImages(config, prompt, [], diagnosticTaskId);
         refreshRemoteUser(config);
         return images;
     } catch (error) {
@@ -887,9 +887,9 @@ export async function requestGeneration(config: AiConfig & { seedIndex?: number;
     }
 }
 
-export async function requestEdit(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, references: ReferenceImage[]) {
+export async function requestEdit(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, references: ReferenceImage[], diagnosticTaskId?: string) {
     try {
-        const images = await requestImages(config, prompt, references);
+        const images = await requestImages(config, prompt, references, diagnosticTaskId);
         refreshRemoteUser(config);
         return images;
     } catch (error) {

@@ -1,13 +1,13 @@
 "use client";
 
-import { App, Button, Empty, Modal, Popconfirm, Select } from "antd";
-import { CheckCircle2, FileDown, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { App, Badge, Button, Empty, Modal, Popconfirm, Select } from "antd";
+import { CheckCircle2, FileDown, FileSearch, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { saveAs } from "file-saver";
 
 import { clearDiagnosticTasks, createDiagnosticExport, listDiagnosticTasks, subscribeDiagnosticTasks, type DiagnosticTask } from "@/services/diagnostic-log";
 
-export function DiagnosticLogModal({ open, canvasId, canvasTitle, onClose }: { open: boolean; canvasId: string; canvasTitle: string; onClose: () => void }) {
+export function DiagnosticLogModal({ open, scopeId, scopeTitle, scopeLabel = "画布", onClose }: { open: boolean; scopeId: string; scopeTitle: string; scopeLabel?: "画布" | "工作台"; onClose: () => void }) {
     const { message } = App.useApp();
     const [tasks, setTasks] = useState<DiagnosticTask[]>([]);
     const [selectedTaskId, setSelectedTaskId] = useState("");
@@ -17,13 +17,13 @@ export function DiagnosticLogModal({ open, canvasId, canvasTitle, onClose }: { o
     const refresh = useCallback(async () => {
         setRefreshing(true);
         try {
-            const next = await listDiagnosticTasks(canvasId);
+            const next = await listDiagnosticTasks(scopeId);
             setTasks(next);
             setSelectedTaskId((current) => (next.some((task) => task.id === current) ? current : next[0]?.id || ""));
         } finally {
             setRefreshing(false);
         }
-    }, [canvasId]);
+    }, [scopeId]);
 
     useEffect(() => {
         if (!open) return;
@@ -32,7 +32,7 @@ export function DiagnosticLogModal({ open, canvasId, canvasTitle, onClose }: { o
 
     const exportSelected = async () => {
         if (!selectedTaskId) {
-            message.warning("当前画布还没有可以导出的诊断任务");
+            message.warning(`当前${scopeLabel}还没有可以导出的诊断任务`);
             return;
         }
         setLoading(true);
@@ -47,11 +47,11 @@ export function DiagnosticLogModal({ open, canvasId, canvasTitle, onClose }: { o
         }
     };
 
-    const clearCurrentCanvas = async () => {
-        await clearDiagnosticTasks(canvasId);
+    const clearCurrentScope = async () => {
+        await clearDiagnosticTasks(scopeId);
         setTasks([]);
         setSelectedTaskId("");
-        message.success("当前画布的诊断日志已清空");
+        message.success(`当前${scopeLabel}的诊断日志已清空`);
     };
 
     const selectedTask = tasks.find((task) => task.id === selectedTaskId);
@@ -64,7 +64,7 @@ export function DiagnosticLogModal({ open, canvasId, canvasTitle, onClose }: { o
                         <ShieldCheck className="size-5 text-emerald-600 dark:text-emerald-400" />
                         诊断日志
                     </div>
-                    <div className="mt-1 text-xs font-normal text-stone-500">当前画布：{canvasTitle}</div>
+                    <div className="mt-1 text-xs font-normal text-stone-500">当前{scopeLabel}：{scopeTitle}</div>
                 </div>
             }
             open={open}
@@ -106,22 +106,22 @@ export function DiagnosticLogModal({ open, canvasId, canvasTitle, onClose }: { o
                     </>
                 ) : (
                     <div className="mt-5 rounded-xl border border-dashed border-stone-200 py-5 dark:border-stone-800">
-                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span className="text-sm text-stone-500">当前画布还没有诊断任务</span>} />
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<span className="text-sm text-stone-500">当前{scopeLabel}还没有诊断任务</span>} />
                     </div>
                 )}
 
-                <div className="mt-5 rounded-xl border border-emerald-200/80 bg-emerald-50/70 px-4 py-3 dark:border-emerald-900 dark:bg-emerald-950/25">
+                <div className="mt-5 rounded-xl border border-stone-200 bg-stone-50/80 px-4 py-3 dark:border-stone-700 dark:bg-stone-900/60">
                     <div className="flex items-start gap-2.5">
-                        <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                        <div className="text-xs leading-5 text-emerald-950 dark:text-emerald-100">
-                            <div className="font-medium">导出内容与安全说明</div>
-                            <div className="mt-1 text-emerald-800/80 dark:text-emerald-200/75">日志会包含本次任务的提示词正文，便于排查请求问题；不会包含 API Key、鉴权信息或素材内容。日志仅下载到本机，不会自动上传。</div>
+                        <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-amber-500 dark:text-amber-400" />
+                        <div className="text-xs leading-5">
+                            <div className="font-medium text-amber-600 dark:text-amber-400">导出内容与安全说明</div>
+                            <div className="mt-1 text-stone-600 dark:text-stone-400">日志会包含本次任务的提示词正文，便于排查请求问题；不会包含 API Key、鉴权信息或素材内容。日志仅下载到本机，不会自动上传。</div>
                         </div>
                     </div>
                 </div>
 
                 <div className="mt-3 flex justify-end">
-                    <Popconfirm title="清空当前画布的诊断日志？" description="清空后无法恢复，不会影响画布和生成记录。" okText="清空" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void clearCurrentCanvas()}>
+                    <Popconfirm title={`清空当前${scopeLabel}的诊断日志？`} description={`清空后无法恢复，不会影响${scopeLabel}和生成记录。`} okText="清空" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void clearCurrentScope()}>
                         <Button type="text" danger size="small" icon={<Trash2 className="size-3.5" />} disabled={!tasks.length}>
                             清空日志
                         </Button>
@@ -132,10 +132,36 @@ export function DiagnosticLogModal({ open, canvasId, canvasTitle, onClose }: { o
     );
 }
 
+export function WorkbenchDiagnosticLogButton({ scopeId, scopeTitle }: { scopeId: "image-workbench" | "video-workbench"; scopeTitle: string }) {
+    const [open, setOpen] = useState(false);
+    const [attention, setAttention] = useState(false);
+
+    const refreshAttention = useCallback(async () => {
+        const [latest] = await listDiagnosticTasks(scopeId);
+        setAttention(latest?.status === "failed");
+    }, [scopeId]);
+
+    useEffect(() => {
+        void refreshAttention();
+        return subscribeDiagnosticTasks(() => void refreshAttention());
+    }, [refreshAttention]);
+
+    return (
+        <>
+            <Badge dot={attention} offset={[-2, 3]}>
+                <Button type="text" size="small" icon={<FileSearch className="size-3.5" />} onClick={() => setOpen(true)}>
+                    日志
+                </Button>
+            </Badge>
+            <DiagnosticLogModal open={open} scopeId={scopeId} scopeTitle={scopeTitle} scopeLabel="工作台" onClose={() => setOpen(false)} />
+        </>
+    );
+}
+
 function taskOptionLabel(task: DiagnosticTask) {
     const time = new Date(task.createdAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
     const mode = ({ image: "图片", video: "视频", audio: "音频", text: "文本", workflow: "工作流" } as const)[task.mode];
-    return `${time} · ${mode} · ${task.model || "未确定"} · ${taskStatusLabel(task.status)}`;
+    return `${time} · ${mode} · ${task.model || "未确定"} · ${task.reconstructed ? "历史补充 · " : ""}${taskStatusLabel(task.status)}`;
 }
 
 function taskStatusLabel(status: DiagnosticTask["status"]) {
