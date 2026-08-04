@@ -1,11 +1,13 @@
 "use client";
 
-import { App, Badge, Button, Empty, Modal, Popconfirm, Select } from "antd";
-import { CheckCircle2, FileDown, FileSearch, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { App, Badge, Button, Checkbox, Empty, Modal, Popconfirm, Select } from "antd";
+import { AlertTriangle, CheckCircle2, FileDown, FileSearch, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { saveAs } from "file-saver";
 
 import { clearDiagnosticTasks, createDiagnosticExport, listDiagnosticTasks, subscribeDiagnosticTasks, type DiagnosticTask } from "@/services/diagnostic-log";
+
+const DIAGNOSTIC_EXPORT_NOTICE_KEY = "infinite-canvas:diagnostic-export-notice:reference-originals-v1";
 
 export function DiagnosticLogModal({ open, scopeId, scopeTitle, scopeLabel = "画布", onClose }: { open: boolean; scopeId: string; scopeTitle: string; scopeLabel?: "画布" | "工作台"; onClose: () => void }) {
     const { message } = App.useApp();
@@ -13,6 +15,8 @@ export function DiagnosticLogModal({ open, scopeId, scopeTitle, scopeLabel = "�
     const [selectedTaskId, setSelectedTaskId] = useState("");
     const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
+    const [exportNoticeOpen, setExportNoticeOpen] = useState(false);
+    const [skipFutureNotice, setSkipFutureNotice] = useState(true);
 
     const refresh = useCallback(async () => {
         setRefreshing(true);
@@ -33,18 +37,39 @@ export function DiagnosticLogModal({ open, scopeId, scopeTitle, scopeLabel = "�
     const exportSelected = async () => {
         if (!selectedTaskId) {
             message.warning(`当前${scopeLabel}还没有可以导出的诊断任务`);
-            return;
+            return false;
         }
         setLoading(true);
         try {
             const result = await createDiagnosticExport(selectedTaskId);
             saveAs(result.blob, result.fileName);
-            message.success("诊断日志已导出，API Key 等敏感信息已自动排除");
+            message.success("诊断日志已导出，软件配置中的 API Key 和鉴权信息已自动排除");
+            return true;
         } catch (error) {
             message.error(error instanceof Error ? error.message : "诊断日志导出失败");
+            return false;
         } finally {
             setLoading(false);
         }
+    };
+
+    const requestExport = () => {
+        if (!selectedTaskId) {
+            message.warning(`当前${scopeLabel}还没有可以导出的诊断任务`);
+            return;
+        }
+        if (!hasAcceptedDiagnosticExportNotice()) {
+            setSkipFutureNotice(true);
+            setExportNoticeOpen(true);
+            return;
+        }
+        void exportSelected();
+    };
+
+    const confirmExport = async () => {
+        setExportNoticeOpen(false);
+        const exported = await exportSelected();
+        if (exported && skipFutureNotice) acceptDiagnosticExportNotice();
     };
 
     const clearCurrentScope = async () => {
@@ -57,26 +82,27 @@ export function DiagnosticLogModal({ open, scopeId, scopeTitle, scopeLabel = "�
     const selectedTask = tasks.find((task) => task.id === selectedTaskId);
 
     return (
-        <Modal
-            title={
-                <div>
-                    <div className="flex items-center gap-2 text-lg font-semibold">
-                        <ShieldCheck className="size-5 text-emerald-600 dark:text-emerald-400" />
-                        诊断日志
+        <>
+            <Modal
+                title={
+                    <div>
+                        <div className="flex items-center gap-2 text-lg font-semibold">
+                            <ShieldCheck className="size-5 text-emerald-600 dark:text-emerald-400" />
+                            诊断日志
+                        </div>
+                        <div className="mt-1 text-xs font-normal text-stone-500">当前{scopeLabel}：{scopeTitle}</div>
                     </div>
-                    <div className="mt-1 text-xs font-normal text-stone-500">当前{scopeLabel}：{scopeTitle}</div>
-                </div>
-            }
-            open={open}
-            width={760}
-            centered
-            footer={null}
-            onCancel={onClose}
-            afterOpenChange={(visible) => {
-                if (visible) void refresh();
-            }}
-        >
-            <div className="pt-2">
+                }
+                open={open}
+                width={760}
+                centered
+                footer={null}
+                onCancel={onClose}
+                afterOpenChange={(visible) => {
+                    if (visible) void refresh();
+                }}
+            >
+                <div className="pt-2">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="max-w-xl text-sm leading-6 text-stone-600 dark:text-stone-400">按每次提交记录生成步骤，帮助判断问题发生在软件、素材、请求、任务查询还是结果保存阶段。打开后会自动读取最新任务。</div>
                     <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={refreshing} onClick={() => void refresh()}>
@@ -91,7 +117,7 @@ export function DiagnosticLogModal({ open, scopeId, scopeTitle, scopeLabel = "�
                                 <div className="mb-1.5 text-xs font-medium text-stone-700 dark:text-stone-300">选择一次提交</div>
                                 <Select className="w-full" value={selectedTaskId || undefined} options={tasks.map((task) => ({ value: task.id, label: taskOptionLabel(task) }))} onChange={setSelectedTaskId} />
                             </div>
-                            <Button type="primary" icon={<FileDown className="size-4" />} loading={loading} disabled={!selectedTaskId} onClick={() => void exportSelected()}>
+                            <Button type="primary" icon={<FileDown className="size-4" />} loading={loading} disabled={!selectedTaskId} onClick={requestExport}>
                                 导出诊断日志
                             </Button>
                         </div>
@@ -115,7 +141,7 @@ export function DiagnosticLogModal({ open, scopeId, scopeTitle, scopeLabel = "�
                         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-amber-500 dark:text-amber-400" />
                         <div className="text-xs leading-5">
                             <div className="font-medium text-amber-600 dark:text-amber-400">导出内容与安全说明</div>
-                            <div className="mt-1 text-stone-600 dark:text-stone-400">日志会包含本次任务的提示词正文，便于排查请求问题；不会包含 API Key、鉴权信息或素材内容。日志仅下载到本机，不会自动上传。</div>
+                            <div className="mt-1 text-stone-600 dark:text-stone-400">诊断包会包含提示词正文、本地参考图原文件、原文件名及图片元数据；公网参考图只记录链接。软件不会额外写入 API Key 或请求鉴权信息，日志仅下载到本机，不会自动上传。</div>
                         </div>
                     </div>
                 </div>
@@ -127,8 +153,41 @@ export function DiagnosticLogModal({ open, scopeId, scopeTitle, scopeLabel = "�
                         </Button>
                     </Popconfirm>
                 </div>
-            </div>
-        </Modal>
+                </div>
+            </Modal>
+            <Modal
+                title={
+                    <div className="flex items-center gap-2">
+                        <AlertTriangle className="size-5 text-amber-500 dark:text-amber-400" />
+                        <span>确认导出诊断日志</span>
+                    </div>
+                }
+                open={exportNoticeOpen}
+                width={520}
+                centered
+                okText="确认并导出"
+                cancelText="取消"
+                confirmLoading={loading}
+                onOk={() => void confirmExport()}
+                onCancel={() => setExportNoticeOpen(false)}
+                destroyOnHidden
+            >
+                <div className="space-y-4 pt-2 text-sm text-stone-700 dark:text-stone-300">
+                    <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 dark:border-stone-700 dark:bg-stone-900/70">
+                        <div className="font-medium text-stone-900 dark:text-stone-100">诊断包将包含</div>
+                        <ul className="mt-2 list-disc space-y-1 pl-5 leading-6 text-stone-600 dark:text-stone-400">
+                            <li>本次任务的提示词正文；</li>
+                            <li>本地参考图原文件、原文件名及图片元数据；</li>
+                            <li>公网参考图链接，以及每张图片的尺寸、大小、格式和请求使用情况。</li>
+                        </ul>
+                    </div>
+                    <div className="text-xs leading-5 text-stone-500">软件不会额外写入 API Key、登录凭证或请求鉴权信息，诊断包只会下载到本机。参考图的画面、原文件名及拍摄时间、位置等元数据会原样保留，请确认后再发送给他人。</div>
+                    <Checkbox checked={skipFutureNotice} onChange={(event) => setSkipFutureNotice(event.target.checked)}>
+                        下次不再提醒
+                    </Checkbox>
+                </div>
+            </Modal>
+        </>
     );
 }
 
@@ -166,4 +225,20 @@ function taskOptionLabel(task: DiagnosticTask) {
 
 function taskStatusLabel(status: DiagnosticTask["status"]) {
     return ({ running: "进行中", success: "成功", failed: "失败" } as const)[status];
+}
+
+function hasAcceptedDiagnosticExportNotice() {
+    try {
+        return window.localStorage?.getItem(DIAGNOSTIC_EXPORT_NOTICE_KEY) === "accepted";
+    } catch {
+        return false;
+    }
+}
+
+function acceptDiagnosticExportNotice() {
+    try {
+        window.localStorage?.setItem(DIAGNOSTIC_EXPORT_NOTICE_KEY, "accepted");
+    } catch {
+        // Restricted browser contexts will show the notice again next time.
+    }
 }

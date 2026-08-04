@@ -12,7 +12,7 @@ import { createCanvasImageTask, pollCanvasImageTaskStatus, requestImageQuestion,
 import { createCanvasAudioTask, pollCanvasAudioTaskStatus, type CanvasAudioTask } from "@/services/api/audio";
 import { createVideoGenerationTask, pollVideoGenerationTaskStatus, VideoRequestError, VIDEO_POLL_INTERVAL_MS, type VideoResponse } from "@/services/api/video";
 import { resolveVideoTaskIds } from "@/services/api/video-polling";
-import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, finishDiagnosticTask, listDiagnosticTasks, startDiagnosticTask, subscribeDiagnosticTasks, updateDiagnosticReferences, type DiagnosticMode, type DiagnosticReferenceSummary } from "@/services/diagnostic-log";
+import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, diagnosticReferenceAssets, diagnosticReferenceSummary, finishDiagnosticTask, listDiagnosticTasks, registerDiagnosticReferenceAssets, startDiagnosticTask, subscribeDiagnosticTasks, updateDiagnosticReferences, type DiagnosticMode, type DiagnosticReferenceAsset, type DiagnosticReferenceSummary } from "@/services/diagnostic-log";
 import { defaultConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { collectImageStorageKeys, deleteStoredImages, resolveImageUrl, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
@@ -2530,8 +2530,9 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
             const rawGenerationContext = buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt);
-            const diagnosticReferences = diagnosticReferencesFromContext(rawGenerationContext);
+            const diagnosticReferences = diagnosticReferencesFromContext(rawGenerationContext, mode);
             updateDiagnosticReferences(diagnosticTaskId, diagnosticReferences);
+            void registerDiagnosticReferenceAssets(diagnosticTaskId, diagnosticReferenceAssetsFromContext(rawGenerationContext, mode));
             appendDiagnosticEvent(diagnosticTaskId, {
                 stage: "input",
                 status: "success",
@@ -3557,8 +3558,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 return;
             }
             const retryImages = retryReferenceImages || [];
-            const retryReferences = diagnosticReferencesFromContext(
-                context || {
+            const retryDiagnosticContext = context || {
                     prompt,
                     referenceImages: retryImages,
                     firstFrame: null,
@@ -3571,9 +3571,10 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     imageCount: retryImages.length,
                     videoCount: 0,
                     audioCount: 0,
-                },
-            );
+                };
+            const retryReferences = diagnosticReferencesFromContext(retryDiagnosticContext, retryMode);
             updateDiagnosticReferences(retryDiagnosticTaskId, retryReferences);
+            void registerDiagnosticReferenceAssets(retryDiagnosticTaskId, diagnosticReferenceAssetsFromContext(retryDiagnosticContext, retryMode));
             appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "reference", status: "success", title: retryReferences.length ? "重试所需参考素材已读取" : "本次重试没有参考素材", data: { references: retryReferences } });
 
             setRunningNodeId(node.id);
@@ -4997,39 +4998,27 @@ function parseCanvasTaskTime(value: unknown) {
     return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function diagnosticReferencesFromContext(context: NodeGenerationContext): DiagnosticReferenceSummary[] {
+function diagnosticReferencesFromContext(context: NodeGenerationContext, mode: DiagnosticMode): DiagnosticReferenceSummary[] {
+    const includesImages = mode === "image" || mode === "video" || mode === "text";
+    const includesVideoMaterials = mode === "video";
     const result: Array<DiagnosticReferenceSummary | null> = [
-        diagnosticReferenceSummary("image", context.referenceImages),
-        diagnosticReferenceSummary("video", context.referenceVideos),
-        diagnosticReferenceSummary("audio", context.referenceAudios),
-        diagnosticReferenceSummary("first-frame", context.firstFrame ? [context.firstFrame] : []),
-        diagnosticReferenceSummary("last-frame", context.lastFrame ? [context.lastFrame] : []),
+        diagnosticReferenceSummary("image", context.referenceImages, includesImages),
+        diagnosticReferenceSummary("video", context.referenceVideos, includesVideoMaterials),
+        diagnosticReferenceSummary("audio", context.referenceAudios, includesVideoMaterials),
+        diagnosticReferenceSummary("first-frame", context.firstFrame ? [context.firstFrame] : [], includesVideoMaterials),
+        diagnosticReferenceSummary("last-frame", context.lastFrame ? [context.lastFrame] : [], includesVideoMaterials),
     ];
     return result.filter((item): item is DiagnosticReferenceSummary => Boolean(item));
 }
 
-function diagnosticReferenceSummary(kind: DiagnosticReferenceSummary["kind"], items: Array<{ bytes?: number; type?: string; mimeType?: string; dataUrl?: string; url?: string; storageKey?: string }>): DiagnosticReferenceSummary | null {
-    if (!items.length) return null;
-    const sources = new Set(
-        items.map((item) => {
-            const value = item.dataUrl || item.url || "";
-            if (/^https?:/i.test(value)) return "remote" as const;
-            if (value.startsWith("data:") || item.storageKey) return "local" as const;
-            return "mixed" as const;
-        }),
-    );
-    const totalBytes = items.reduce((sum, item) => {
-        if (item.bytes) return sum + item.bytes;
-        if (item.dataUrl?.startsWith("data:")) return sum + getDataUrlByteSize(item.dataUrl);
-        return sum;
-    }, 0);
-    return {
-        kind,
-        count: items.length,
-        totalBytes: totalBytes || undefined,
-        mimeTypes: [...new Set(items.map((item) => item.mimeType || item.type || "").filter(Boolean))],
-        source: sources.size === 1 ? Array.from(sources)[0] || "mixed" : "mixed",
-    };
+function diagnosticReferenceAssetsFromContext(context: NodeGenerationContext, mode: DiagnosticMode): DiagnosticReferenceAsset[] {
+    const includesImages = mode === "image" || mode === "video" || mode === "text";
+    const includesFrames = mode === "video";
+    return [
+        ...diagnosticReferenceAssets("image", context.referenceImages, includesImages),
+        ...diagnosticReferenceAssets("first-frame", context.firstFrame ? [context.firstFrame] : [], includesFrames),
+        ...diagnosticReferenceAssets("last-frame", context.lastFrame ? [context.lastFrame] : [], includesFrames),
+    ];
 }
 
 function diagnosticProgressBucket(progress: unknown) {

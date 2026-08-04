@@ -28,7 +28,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { normalizeLocalChannels, useConfigStore, useEffectiveConfig, type AiConfig, type VideoElementItem, type VideoElementReference } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, diagnosticReferenceSummary, finishDiagnosticTask, startDiagnosticTask } from "@/services/diagnostic-log";
+import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, diagnosticReferenceAssets, diagnosticReferenceSummary, finishDiagnosticTask, startDiagnosticTask } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -695,6 +695,11 @@ export default function VideoPage() {
             channelId: snapshot.config.videoChannelId || snapshot.config.activeChannelId || "",
             prompt: snapshot.text,
             references: diagnosticReferences,
+            referenceAssets: [
+                ...diagnosticReferenceAssets("image", snapshot.references),
+                ...diagnosticReferenceAssets("first-frame", snapshot.firstFrame ? [snapshot.firstFrame] : []),
+                ...diagnosticReferenceAssets("last-frame", snapshot.lastFrame ? [snapshot.lastFrame] : []),
+            ],
         });
         appendDiagnosticEvent(diagnosticTaskId, { stage: "config", status: "success", title: "视频配置检查通过", data: { model: snapshot.model, count: snapshot.taskCount, size: snapshot.config.size, resolution: snapshot.config.vquality, seconds: snapshot.config.videoSeconds } });
         appendDiagnosticEvent(diagnosticTaskId, { stage: "input", status: "success", title: "已收集视频生成输入", data: { taskCount: snapshot.taskCount } });

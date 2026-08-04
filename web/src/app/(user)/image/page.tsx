@@ -53,7 +53,7 @@ import { deleteImageGenerationLogs, fetchImageGenerationLogs, saveImageGeneratio
 import { deleteStoredImages, imageToDataUrl, resolveImageUrl, uploadImage, uploadRemoteImageToServer } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, diagnosticReferenceSummary, ensureReconstructedDiagnosticTask, finishDiagnosticTask, startDiagnosticTask } from "@/services/diagnostic-log";
+import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, diagnosticReferenceAssets, diagnosticReferenceSummary, ensureReconstructedDiagnosticTask, finishDiagnosticTask, registerDiagnosticReferenceAssets, startDiagnosticTask } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
 
 type GeneratedImage = {
@@ -509,6 +509,7 @@ export default function ImagePage() {
             channelId: snapshot.requestConfig.imageChannelId || snapshot.requestConfig.activeChannelId || "",
             prompt: snapshot.text,
             references: reference ? [reference] : [],
+            referenceAssets: diagnosticReferenceAssets("image", snapshot.references),
         });
         appendDiagnosticEvent(diagnosticTaskId, { stage: "config", status: "success", title: "生图配置检查通过", data: { model: snapshot.requestConfig.model, count: snapshot.displayConfig.count, size: snapshot.displayConfig.size, quality: snapshot.displayConfig.quality } });
         appendDiagnosticEvent(diagnosticTaskId, { stage: "input", status: "success", title: "已收集生图输入", data: { referenceCount: snapshot.references.length } });
@@ -2641,7 +2642,7 @@ async function reportImageAvailabilityIssues(logs: GenerationLog[]) {
             finishDiagnosticTask(log.diagnosticTaskId, "failed", "请求可能已经成功，但图片保存、读取或页面展示阶段出现异常");
             continue;
         }
-        await ensureReconstructedDiagnosticTask({
+        const reconstructedTaskId = await ensureReconstructedDiagnosticTask({
             sourceRecordId: log.id,
             scopeType: "image-workbench",
             scopeId: "image-workbench",
@@ -2657,6 +2658,7 @@ async function reportImageAvailabilityIssues(logs: GenerationLog[]) {
             issue,
             data,
         });
+        await registerDiagnosticReferenceAssets(reconstructedTaskId, diagnosticReferenceAssets("image", log.references));
     }
 }
 

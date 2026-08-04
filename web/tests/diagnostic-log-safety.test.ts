@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { createDiagnosticRequestSnapshot, diagnosticExportLooksSafe, prepareDiagnosticValue, sanitizeDiagnosticValue } from "../src/lib/diagnostic-log-safety.ts";
+import { createDiagnosticRequestSnapshot, diagnosticExportLooksSafe, prepareDiagnosticValue, sanitizeDiagnosticReferenceUrl, sanitizeDiagnosticValue } from "../src/lib/diagnostic-log-safety.ts";
 
 test("诊断日志隐藏密钥、鉴权信息和素材内容", () => {
     const sanitized = sanitizeDiagnosticValue(
@@ -36,12 +36,37 @@ test("诊断导出固定包含提示词并在界面明确说明安全范围", as
     const webRoot = new URL("../", import.meta.url);
     const modal = await readFile(new URL("src/components/layout/diagnostic-log-modal.tsx", webRoot), "utf8");
     const service = await readFile(new URL("src/services/diagnostic-log.ts", webRoot), "utf8");
-    assert.doesNotMatch(modal, /Checkbox|includePrompt|默认不选/);
-    assert.match(modal, /日志会包含本次任务的提示词正文/);
-    assert.match(modal, /不会包含 API Key/);
+    assert.doesNotMatch(modal, /includePrompt|默认不选/);
+    assert.match(modal, /本次任务的提示词正文/);
+    assert.match(modal, /本地参考图原文件、原文件名及图片元数据/);
+    assert.match(modal, /公网参考图只记录链接/);
+    assert.match(modal, /不会额外写入 API Key/);
     assert.match(modal, /不会自动上传/);
+    assert.match(modal, /useState\(true\)/);
+    assert.match(modal, /下次不再提醒/);
+    assert.match(modal, /DIAGNOSTIC_EXPORT_NOTICE_KEY/);
     assert.match(service, /createDiagnosticExport\(taskId: string\)/);
     assert.match(service, /sanitizeDiagnosticValue\(\{ \.\.\.task, prompt: task\.prompt \}, true\)/);
+});
+
+test("参考图诊断记录尺寸并区分本地原文件与公网链接", async () => {
+    const webRoot = new URL("../", import.meta.url);
+    const service = await readFile(new URL("src/services/diagnostic-log.ts", webRoot), "utf8");
+    assert.match(service, /DiagnosticReferenceItemSummary/);
+    assert.match(service, /width\?: number/);
+    assert.match(service, /height\?: number/);
+    assert.match(service, /includedInRequest/);
+    assert.match(service, /exportType: "original-file"/);
+    assert.match(service, /exportType: "public-url"/);
+    assert.match(service, /参考素材\/素材信息\.json/);
+    assert.match(service, /getImageBlob/);
+});
+
+test("公网参考图链接保留普通参数并隐藏鉴权参数", () => {
+    const sanitized = sanitizeDiagnosticReferenceUrl("https://cdn.example.com/reference.png?w=1600&signature=private-signature&token=secret-token#preview");
+    assert.match(sanitized, /w=1600/);
+    assert.doesNotMatch(sanitized, /signature|private-signature|token|secret-token|preview/);
+    assert.equal(diagnosticExportLooksSafe(sanitized), true);
 });
 
 test("生图与视频工作台在结果标题旁接入独立诊断范围", async () => {

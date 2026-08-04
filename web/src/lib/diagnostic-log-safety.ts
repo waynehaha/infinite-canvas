@@ -95,6 +95,22 @@ export function diagnosticExportLooksSafe(value: unknown) {
     );
 }
 
+export function sanitizeDiagnosticReferenceUrl(value: string) {
+    if (!/^https?:/i.test(value)) return "[公网链接不可用]";
+    try {
+        const url = new URL(value);
+        url.username = "";
+        url.password = "";
+        url.hash = "";
+        for (const key of [...url.searchParams.keys()]) {
+            if (/(?:api[-_]?key|token|signature|authorization|credential|access[-_]?key|secret|password|x-amz-|x-goog-signature)/i.test(key)) url.searchParams.delete(key);
+        }
+        return url.toString();
+    } catch {
+        return "[公网链接不可用]";
+    }
+}
+
 function unsafePatternTest(pattern: RegExp, value: string) {
     pattern.lastIndex = 0;
     const matched = pattern.test(value);
