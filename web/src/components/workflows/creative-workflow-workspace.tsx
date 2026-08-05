@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { getAIHubImageCapability } from "@/lib/aihub-model-capabilities";
 import { getAIHubImageReferenceError } from "@/lib/aihub-reference-policy";
+import { USER_LOGIN_ENABLED } from "@/lib/user-auth-mode";
 import { ModelPicker } from "@/components/model-picker";
 import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
@@ -998,9 +999,11 @@ export function CreativeWorkflowWorkspace({
                             onChange={setWorkflowCategory}
                         />
                         <Input.Search allowClear placeholder="搜索名称、分类、描述" className="w-72 max-w-full" value={query} onChange={(event) => setQuery(event.target.value)} />
-                        <Button icon={<Bot className="size-4" />} onClick={() => setAgentOpen(true)}>
-                            AI 创建
-                        </Button>
+                        {USER_LOGIN_ENABLED ? (
+                            <Button icon={<Bot className="size-4" />} onClick={() => setAgentOpen(true)}>
+                                AI 创建
+                            </Button>
+                        ) : null}
                         <Button icon={<Layers3 className="size-4" />} onClick={() => setEditingWorkflow(createBlankWorkflow(effectiveConfig, "multi_image_series"))}>
                             新建多图
                         </Button>
@@ -2168,5 +2171,4 @@ function referenceUsedByWorkflowTask(reference: ReferenceImage, tasks: WorkflowT
 function formatDate(value: number) {
     return new Date(value).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
-
 

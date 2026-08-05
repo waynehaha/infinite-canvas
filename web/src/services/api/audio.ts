@@ -1,6 +1,7 @@
 import axios from "axios";
 
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { USER_LOGIN_ENABLED, shouldUseAccountProxy } from "@/lib/user-auth-mode";
 import { createAIHubMusicBody, extractAIHubAudioSource, isAIHubMusicModel } from "@/services/api/aihub/audio";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
@@ -27,7 +28,7 @@ export type CanvasAudioTaskOptions = { nodeId?: string; sourceId?: string; clien
 
 function usesAccountProxy(config: AiConfig) {
     const token = useUserStore.getState().token;
-    return config.channelMode === "remote" || (config.channelMode === "local" && Boolean(token));
+    return shouldUseAccountProxy(config.channelMode, Boolean(token));
 }
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -45,7 +46,7 @@ function aiHeaders(config: AiConfig) {
             "Content-Type": "application/json",
         };
     }
-    if (token) {
+    if (USER_LOGIN_ENABLED && token) {
         return {
             Authorization: `Bearer ${token}`,
             ...(channelIdForActiveModel(config) ? { "X-User-Model-Channel-ID": channelIdForActiveModel(config) } : {}),

@@ -10,6 +10,7 @@ import { createDiagnosticRequestSnapshot } from "@/lib/diagnostic-log-safety";
 import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
 import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig, type VideoElementReference } from "@/stores/use-config-store";
+import { USER_LOGIN_ENABLED, shouldUseAccountProxy } from "@/lib/user-auth-mode";
 import { useUserStore } from "@/stores/use-user-store";
 import { appendDiagnosticEvent } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
@@ -69,7 +70,7 @@ export class VideoRequestError extends Error {
 
 function usesAccountProxy(config: AiConfig) {
     const token = useUserStore.getState().token;
-    return config.channelMode === "remote" || (config.channelMode === "local" && Boolean(token));
+    return shouldUseAccountProxy(config.channelMode, Boolean(token));
 }
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -99,7 +100,7 @@ function aiHeaders(config: AiConfig) {
     const token = useUserStore.getState().token;
     if (config.channelMode === "remote" && !token) throw new Error("请先登录后再使用云端渠道");
     if (config.channelMode === "remote") return { Authorization: `Bearer ${token}`, ...(channelIdForActiveModel(config) ? { "X-Model-Channel-ID": channelIdForActiveModel(config) } : {}) };
-    if (token) return { Authorization: `Bearer ${token}`, ...(channelIdForActiveModel(config) ? { "X-User-Model-Channel-ID": channelIdForActiveModel(config) } : {}) };
+    if (USER_LOGIN_ENABLED && token) return { Authorization: `Bearer ${token}`, ...(channelIdForActiveModel(config) ? { "X-User-Model-Channel-ID": channelIdForActiveModel(config) } : {}) };
     return { Authorization: `Bearer ${localChannelForActiveModel(config)?.apiKey || config.apiKey}` };
 }
 

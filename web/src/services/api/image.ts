@@ -7,6 +7,7 @@ import { createAIHubChatImageBody, createAIHubImageEditForm, createAIHubImageGen
 import { requestVideoGeneration } from "@/services/api/video";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
 import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
+import { USER_LOGIN_ENABLED, shouldUseAccountProxy } from "@/lib/user-auth-mode";
 import { useUserStore } from "@/stores/use-user-store";
 import { appendDiagnosticEvent } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
@@ -446,7 +447,7 @@ function withPromptGuard(config: AiConfig, prompt: string) {
 
 function usesAccountProxy(config: AiConfig) {
     const token = useUserStore.getState().token;
-    return config.channelMode === "remote" || (config.channelMode === "local" && Boolean(token));
+    return shouldUseAccountProxy(config.channelMode, Boolean(token));
 }
 
 export function aiApiUrl(config: AiConfig, path: string) {
@@ -465,7 +466,7 @@ export function aiHeaders(config: AiConfig, contentType?: string) {
             ...(contentType ? { "Content-Type": contentType } : {}),
         };
     }
-    if (token) {
+    if (USER_LOGIN_ENABLED && token) {
         const userChannelId = channelIdForActiveModel(config);
         return {
             Authorization: `Bearer ${token}`,

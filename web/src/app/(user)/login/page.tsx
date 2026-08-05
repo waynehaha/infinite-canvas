@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
 import { fetchCurrentUser } from "@/services/api/auth";
+import { USER_LOGIN_ENABLED, isAdminLoginRedirect } from "@/lib/user-auth-mode";
 import { useConfigStore } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -40,24 +41,36 @@ function LoginContent() {
     const login = useUserStore((state) => state.login);
     const register = useUserStore((state) => state.register);
     const setSession = useUserStore((state) => state.setSession);
+    const clearSession = useUserStore((state) => state.clearSession);
     const isLoading = useUserStore((state) => state.isLoading);
-    const linuxDoEnabled = useConfigStore((state) => state.publicSettings?.auth?.linuxDo?.enabled === true);
-    const allowRegister = useConfigStore((state) => state.publicSettings?.auth?.allowRegister !== false);
+    const linuxDoEnabled = useConfigStore((state) => USER_LOGIN_ENABLED && state.publicSettings?.auth?.linuxDo?.enabled === true);
+    const allowRegister = useConfigStore((state) => USER_LOGIN_ENABLED && state.publicSettings?.auth?.allowRegister !== false);
     const [mode, setMode] = useState<"login" | "register">("login");
     const redirect = safeRedirect(searchParams.get("redirect"));
+    const isAdminLogin = isAdminLoginRedirect(redirect);
 
     useEffect(() => {
+        if (!USER_LOGIN_ENABLED && !isAdminLogin) {
+            router.replace("/");
+            return;
+        }
         const token = searchParams.get("token");
         const error = searchParams.get("error");
         if (error) message.error(error);
         if (!token) return;
         void fetchCurrentUser(token).then((user) => {
+            if (isAdminLogin && user.role !== "admin") {
+                clearSession();
+                message.error("仅管理员可登录后台");
+                router.replace("/");
+                return;
+            }
             setSession(token, user);
             message.success("登录成功");
             router.replace(redirect);
             router.refresh();
         });
-    }, [message, redirect, router, searchParams, setSession]);
+    }, [clearSession, isAdminLogin, message, redirect, router, searchParams, setSession]);
 
     useEffect(() => {
         if (!allowRegister && mode === "register") setMode("login");
@@ -75,6 +88,12 @@ function LoginContent() {
             }
             const action = mode === "register" ? register : login;
             const user = await action({ username: values.username, password: values.password });
+            if (isAdminLogin && user.role !== "admin") {
+                clearSession();
+                message.error("仅管理员可登录后台");
+                router.replace("/");
+                return;
+            }
             message.success(mode === "register" ? "注册成功" : "登录成功");
             router.replace(redirect);
             router.refresh();
@@ -83,6 +102,8 @@ function LoginContent() {
             message.error(error instanceof Error ? error.message : "登录失败");
         }
     };
+
+    if (!USER_LOGIN_ENABLED && !isAdminLogin) return null;
 
     return (
         <main className="flex h-full min-h-0 items-center justify-center overflow-y-auto bg-background bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] px-6 py-10 [background-size:16px_16px] dark:bg-[radial-gradient(rgba(245,245,244,.16)_1px,transparent_1px)]">
@@ -96,8 +117,8 @@ function LoginContent() {
                         }}
                         aria-label="无限画布"
                     />
-                    <h1 className="text-3xl font-semibold tracking-normal text-stone-950 dark:text-stone-100">账号登录</h1>
-                    <p className="mt-3 text-base leading-7 text-stone-500 dark:text-stone-400">支持账号密码和 Linux.do 登录。</p>
+                    <h1 className="text-3xl font-semibold tracking-normal text-stone-950 dark:text-stone-100">{isAdminLogin ? "管理员登录" : "账号登录"}</h1>
+                    <p className="mt-3 text-base leading-7 text-stone-500 dark:text-stone-400">{isAdminLogin ? "登录后进入系统管理后台。" : "支持账号密码和 Linux.do 登录。"}</p>
                 </div>
 
                 <Form<LoginFormValues> layout="vertical" size="large" requiredMark={false} onFinish={submit}>

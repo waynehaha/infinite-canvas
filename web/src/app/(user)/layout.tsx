@@ -4,6 +4,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import { AppTopNav } from "@/components/layout/app-top-nav";
+import { USER_LOGIN_ENABLED } from "@/lib/user-auth-mode";
 import { fetchUserConfig } from "@/services/api/user-config";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -23,6 +24,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     }, [isProtectedPage, isReady, pathname, router, user]);
 
     useEffect(() => {
+        if (!USER_LOGIN_ENABLED) return;
         if (!isReady) return;
         if (!user) {
             wasLoggedOutRef.current = true;

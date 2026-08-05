@@ -7,6 +7,7 @@ import { persist } from "zustand/middleware";
 import { apiGet } from "@/services/api/request";
 import type { AdminPublicSettings } from "@/services/api/admin";
 import { AIHUB_BASE_URL, AIHUB_DEFAULT_MODEL, AIHUB_DEFAULT_MODELS, aihubModelCapability } from "@/lib/aihub-models";
+import { USER_LOGIN_ENABLED } from "@/lib/user-auth-mode";
 import { useUserStore } from "@/stores/use-user-store";
 
 export type LocalModelChannel = {
@@ -440,7 +441,7 @@ export function useEffectiveConfig() {
     const modelChannel = useConfigStore((state) => state.publicSettings?.modelChannel || null);
     const token = useUserStore((state) => state.token);
     const user = useUserStore((state) => state.user);
-    const canUseRemoteChannel = Boolean(token && user && (user.role === "admin" || modelChannel?.allowUserRemoteChannel === true));
+    const canUseRemoteChannel = USER_LOGIN_ENABLED && Boolean(token && user && (user.role === "admin" || modelChannel?.allowUserRemoteChannel === true));
     return useMemo(() => resolveEffectiveConfig(config, modelChannel, canUseRemoteChannel), [canUseRemoteChannel, config, modelChannel]);
 }
 

@@ -9,6 +9,7 @@ import { fetchUserConfig, measureUserStorageProvider, syncUserModelConfig, syncU
 import { clearStorageConfigCache as clearFileStorageCache } from "@/services/file-storage";
 import { clearStorageConfigCache as clearImageStorageCache, defaultUserStorageProvider, loadStorageConfig, saveUserStorageProvider, USER_STORAGE_PROVIDER_KEY, type UserStorageProvider } from "@/services/image-storage";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
+import { USER_LOGIN_ENABLED } from "@/lib/user-auth-mode";
 import { filterModelsByCapability, normalizeLocalChannels, useConfigStore, useEffectiveConfig, type AiConfig, type LocalModelChannel, type ModelCapability } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -51,7 +52,7 @@ export function AppConfigModal() {
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
     const publicSettings = useConfigStore((state) => state.publicSettings);
-    const token = useUserStore((state) => state.token);
+    const token = useUserStore((state) => (USER_LOGIN_ENABLED ? state.token : ""));
     const user = useUserStore((state) => state.user);
     const effectiveConfig = useEffectiveConfig();
     const modelChannel = publicSettings?.modelChannel;
@@ -148,7 +149,7 @@ export function AppConfigModal() {
             clearImageStorageCache();
             clearFileStorageCache();
             setConfigDialogOpen(false);
-            if ((config.syncModelConfig || config.syncStorageConfig) && !token) message.warning("请登录后再同步配置");
+            if (USER_LOGIN_ENABLED && (config.syncModelConfig || config.syncStorageConfig) && !token) message.warning("请登录后再同步配置");
             else if (localIncomplete || modelIncomplete) message.warning("部分模型或本地渠道密钥尚未配置完整，配置已保存");
             else message.success(shouldPromptContinue ? "配置已保存，请继续刚才的请求" : "配置已保存");
             clearPromptContinue();
@@ -347,8 +348,12 @@ export function AppConfigModal() {
                                     <div className="mt-1 text-xs text-stone-500">当前已保存 {config.models.length} 个模型</div>
                                 </div>
                                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                                    <span className="text-xs text-stone-500">自动同步</span>
-                                    <Switch size="small" checked={config.syncModelConfig} onChange={(checked) => updateConfig("syncModelConfig", checked)} />
+                                    {USER_LOGIN_ENABLED ? (
+                                        <>
+                                            <span className="text-xs text-stone-500">自动同步</span>
+                                            <Switch size="small" checked={config.syncModelConfig} onChange={(checked) => updateConfig("syncModelConfig", checked)} />
+                                        </>
+                                    ) : null}
                                     <Button size="small" loading={loadingModels} disabled={Boolean(testingChannelId)} onClick={() => void refreshModels()}>
                                         更新全部模型
                                     </Button>
