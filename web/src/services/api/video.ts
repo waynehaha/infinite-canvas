@@ -4,6 +4,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { aiHubTaskContentId, aiHubTaskContentIds, aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody } from "@/services/api/aihub/video";
 import { classifyVideoPollingFailure, requestVideoContentCandidates, selectVideoPollId, withVideoResultTimeout } from "@/services/api/video-polling";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio } from "@/lib/seedance-video";
+import { getAIHubVideoCapability, normalizeAIHubVideoAspectRatio } from "@/lib/aihub-model-capabilities";
 import { isKIEGrokVideoModel } from "@/components/video-settings-panel";
 import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
 import { createDiagnosticRequestSnapshot } from "@/lib/diagnostic-log-safety";
@@ -116,7 +117,14 @@ export type VideoReferenceInput = {
     lastFrame?: ReferenceImage | null;
 };
 
-export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] | VideoReferenceInput = [], videoReferencesOrProgress?: ReferenceVideo[] | ((progress: number) => void), audioReferences: ReferenceAudio[] = [], options: VideoTaskCreateOptions = {}) {
+export async function requestVideoGeneration(
+    config: AiConfig,
+    prompt: string,
+    references: ReferenceImage[] | VideoReferenceInput = [],
+    videoReferencesOrProgress?: ReferenceVideo[] | ((progress: number) => void),
+    audioReferences: ReferenceAudio[] = [],
+    options: VideoTaskCreateOptions = {},
+) {
     const legacyVideoReferences = Array.isArray(videoReferencesOrProgress) ? videoReferencesOrProgress : undefined;
     const onProgress = typeof videoReferencesOrProgress === "function" ? videoReferencesOrProgress : undefined;
     const input = legacyVideoReferences ? { references: Array.isArray(references) ? references : references.references || [], videoReferences: legacyVideoReferences, audioReferences } : references;
@@ -129,7 +137,15 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const systemPrompt = (config.systemPrompts.video || config.systemPrompt).trim();
     const createOptions = normalizeVideoTaskCreateOptions(options);
     const body = await createVideoRequestBody(config, model, systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt, normalizeVideoReferenceInput(references));
-    appendDiagnosticEvent(createOptions.diagnosticTaskId, { stage: "request", status: "info", title: "视频请求已组装", data: { method: "POST", endpoint: "/videos", request: createDiagnosticRequestSnapshot(body) } });
+    const requestSnapshot = createDiagnosticRequestSnapshot(body);
+    const parameterCheck = compareVideoRequestParameters(config, model, requestSnapshot);
+    appendDiagnosticEvent(createOptions.diagnosticTaskId, {
+        stage: "request",
+        status: parameterCheck.mismatches.length ? "warning" : "info",
+        title: "视频请求已组装",
+        detail: parameterCheck.mismatches.length ? `发现 ${parameterCheck.mismatches.length} 项参数不一致` : undefined,
+        data: { method: "POST", endpoint: "/videos", parameterCheck, request: requestSnapshot },
+    });
     const startedAt = Date.now();
     try {
         const accountProxy = usesAccountProxy(config);
@@ -140,7 +156,12 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             ...(accountProxy && createOptions.sourceId ? { "X-Video-Task-Source-ID": createOptions.sourceId } : {}),
         };
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers })).data);
-        appendDiagnosticEvent(createOptions.diagnosticTaskId, { stage: "request", status: "success", title: "视频请求提交成功", data: { endpoint: "/videos", httpStatus: 200, durationMs: Date.now() - startedAt } });
+        appendDiagnosticEvent(createOptions.diagnosticTaskId, {
+            stage: "request",
+            status: "success",
+            title: "视频请求提交成功",
+            data: { endpoint: "/videos", httpStatus: 200, durationMs: Date.now() - startedAt, remoteTaskId: created.id || created.task_id || created.video_id || "", remoteStatus: created.status || "queued" },
+        });
         if (!created.id && !created.video_id) throw new Error("视频接口没有返回任务 ID");
         if (typeof created.progress === "number") onProgress?.(created.progress, created);
         return { task: created, pollId: videoPollId(model, created), startedAt, requestBody: body };
@@ -241,9 +262,7 @@ async function materializeAIHubVideoTask(config: AiConfig, task: VideoResponse, 
 }
 
 function fetchAIHubVideoContent(config: AiConfig, taskId: string) {
-    const downloadUrl = usesAccountProxy(config)
-        ? aiApiUrl(config, `/videos/${encodeURIComponent(taskId)}/content`)
-        : aiHubTaskContentProxyUrl(taskId);
+    const downloadUrl = usesAccountProxy(config) ? aiApiUrl(config, `/videos/${encodeURIComponent(taskId)}/content`) : aiHubTaskContentProxyUrl(taskId);
     return withVideoResultTimeout(VIDEO_RESULT_DOWNLOAD_TIMEOUT_MS, async (signal) => {
         const response = await fetch(downloadUrl, { headers: aiHeaders(config), signal });
         return { response, ok: response.ok, status: response.status, blob: response.ok ? await response.blob() : undefined };
@@ -608,6 +627,26 @@ function normalizeVideoSize(value: string) {
     const size = value || "1280x720";
     if (/^\d+x\d+$/.test(size)) return size;
     return ["9:16", "2:3", "3:4"].includes(size) ? "720x1280" : "1280x720";
+}
+
+function compareVideoRequestParameters(config: AiConfig, model: string, snapshot: ReturnType<typeof createDiagnosticRequestSnapshot>) {
+    const rawBody = snapshot.body as Record<string, unknown>;
+    const body = rawBody.fields && typeof rawBody.fields === "object" ? (rawBody.fields as Record<string, unknown>) : rawBody;
+    const read = (key: string) => {
+        const value = body[key];
+        if (Array.isArray(value)) return value[0];
+        return value;
+    };
+    const capability = getAIHubVideoCapability(model);
+    const expectedAspectRatio = capability?.aspectRatio ? normalizeAIHubVideoAspectRatio(capability, config.size) : undefined;
+    const actualAspectRatio = typeof read("aspect_ratio") === "string" ? read("aspect_ratio") : undefined;
+    const checks = {
+        aspectRatio: expectedAspectRatio ? { expected: expectedAspectRatio, actual: actualAspectRatio, matched: expectedAspectRatio === actualAspectRatio } : undefined,
+    };
+    const mismatches = Object.entries(checks)
+        .filter(([, value]) => value && !value.matched)
+        .map(([key]) => key);
+    return { checks, mismatches };
 }
 
 function parseVideoDimensions(size: string) {

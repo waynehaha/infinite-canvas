@@ -32,6 +32,11 @@ test("Omni 文生视频使用 JSON 请求", () => {
     });
 });
 
+test("Omni 旧尺寸值仍会正确转换为竖屏比例", () => {
+    const body = createAIHubVideoBody(videoInput({ aspectRatio: "720x1280" }));
+    assert.equal((body as Record<string, unknown>).aspect_ratio, "9:16");
+});
+
 test("Omni 单图使用标量字段，多图使用真正的字符串数组", () => {
     const first = "https://cdn.example.com/first.jpg";
     const second = "https://cdn.example.com/second.jpg";

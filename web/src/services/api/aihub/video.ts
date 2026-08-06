@@ -1,5 +1,5 @@
 import { isAIHubOmniModel, isAIHubSeedanceModel } from "@/lib/aihub-models";
-import { getAIHubImageCapability, getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
+import { getAIHubImageCapability, getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue, normalizeAIHubVideoAspectRatio } from "@/lib/aihub-model-capabilities";
 
 export type AIHubMediaValue = string | File;
 
@@ -21,22 +21,15 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
     const normalizedModel = model === "grok-imagine-video-1.5-preview" ? "grok-imagine-video-1.5" : model;
     const capability = getAIHubVideoCapability(normalizedModel);
     const imageCapability = getAIHubImageCapability(input.model);
-    const legacyGrokAspectRatios: Record<string, string> = {
-        "720x1280": "9:16",
-        "1280x720": "16:9",
-        "1024x1024": "1:1",
-        "1024x1792": "2:3",
-        "1792x1024": "3:2",
-    };
-    const requestedAspectRatio = normalizedModel.startsWith("grok-imagine-video") ? legacyGrokAspectRatios[input.aspectRatio] || input.aspectRatio : input.aspectRatio;
-    const aspectRatio = capability?.aspectRatio ? normalizeAIHubSelectValue(capability.aspectRatio, requestedAspectRatio) : imageCapability?.size ? normalizeAIHubSelectValue(imageCapability.size, requestedAspectRatio) : requestedAspectRatio;
-    const seconds = capability?.duration?.mode === "fixed"
-        ? String(capability.duration.value)
-        : capability?.duration?.mode === "range"
-          ? String(normalizeAIHubRangeValue(capability.duration, input.seconds))
-          : capability?.duration?.mode === "select"
-            ? normalizeAIHubSelectValue(capability.duration, input.seconds)
-            : input.seconds;
+    const aspectRatio = capability?.aspectRatio ? normalizeAIHubVideoAspectRatio(capability, input.aspectRatio) : imageCapability?.size ? normalizeAIHubSelectValue(imageCapability.size, input.aspectRatio) : input.aspectRatio;
+    const seconds =
+        capability?.duration?.mode === "fixed"
+            ? String(capability.duration.value)
+            : capability?.duration?.mode === "range"
+              ? String(normalizeAIHubRangeValue(capability.duration, input.seconds))
+              : capability?.duration?.mode === "select"
+                ? normalizeAIHubSelectValue(capability.duration, input.seconds)
+                : input.seconds;
     if (normalizedModel.startsWith("grok-imagine-video")) {
         const references = input.references.slice(0, capability?.references?.images?.max || 1);
         if (normalizedModel === "grok-imagine-video-1.5" && !references.length) throw new Error("Grok Imagine 1.5 需要至少一张参考图");
@@ -150,7 +143,10 @@ export function aiHubVideoFailureMessage(model: string, message: string) {
     if (/cannot unmarshal string into Go struct field .*images.*\[\]string|invalid request body must be valid json/i.test(normalized)) {
         return "多张参考图的参数格式不正确，请重新生成";
     }
-    if (/(?:bad_reference_image|reference image|image reference|input image|uploaded image)/i.test(normalized) && /protected IP|identifiable real person|third-party content providers|content (?:policy|safety)|safety (?:policy|filter)|refus(?:e|ed|al)/i.test(normalized)) {
+    if (
+        /(?:bad_reference_image|reference image|image reference|input image|uploaded image)/i.test(normalized) &&
+        /protected IP|identifiable real person|third-party content providers|content (?:policy|safety)|safety (?:policy|filter)|refus(?:e|ed|al)/i.test(normalized)
+    ) {
         return "参考图片触发了内容安全策略，视频模型无法处理。请更换不含可识别真人、知名角色、品牌标志或其他敏感内容的图片后重新生成；直接重试通常无效";
     }
     if (/protected IP|identifiable real person|third-party content providers|I can(?:not|'t) generate (?:the|that) video|Gemini couldn't generate (?:a|the) video/i.test(normalized)) {
@@ -165,10 +161,7 @@ function unwrapAIHubErrorMessage(message: string) {
         try {
             const parsed = JSON.parse(current) as { message?: unknown; error?: unknown };
             const error = parsed?.error;
-            const next =
-                (error && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : "") ||
-                (typeof error === "string" ? error : "") ||
-                (typeof parsed?.message === "string" ? parsed.message : "");
+            const next = (error && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : "") || (typeof error === "string" ? error : "") || (typeof parsed?.message === "string" ? parsed.message : "");
             if (!next || next.trim() === current) break;
             current = next.trim();
         } catch {
@@ -184,7 +177,7 @@ function assertMediaLimit(label: string, limit: { max: number; maxBytes?: number
         return;
     }
     if (values.length > limit.max) throw new Error(`${label}最多支持 ${limit.max} 个`);
-    const sizes = values.map((value) => value instanceof File ? value.size : dataMediaBytes(value)).filter((value): value is number => typeof value === "number");
+    const sizes = values.map((value) => (value instanceof File ? value.size : dataMediaBytes(value))).filter((value): value is number => typeof value === "number");
     if (limit.maxBytes && sizes.some((size) => size > limit.maxBytes!)) throw new Error(`${label}单个不能超过 ${Math.floor(limit.maxBytes / 1024 / 1024)}MB`);
     if (limit.maxTotalBytes && sizes.reduce((sum, size) => sum + size, 0) > limit.maxTotalBytes) throw new Error(`${label}总大小不能超过 ${Math.floor(limit.maxTotalBytes / 1024 / 1024)}MB`);
 }

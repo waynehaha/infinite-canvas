@@ -243,14 +243,7 @@ const omniBase = {
     resolution: { mode: "fixed" as const, value: "720p", label: "720p" },
 };
 
-const seedanceModels = [
-    "Seedance-2.0-mini-480p",
-    "Seedance-2.0-fast-480p",
-    "Seedance-2.0-480p",
-    "Seedance-2.0-mini-720p",
-    "Seedance-2.0-fast-720p",
-    "Seedance-2.0-720p",
-] as const;
+const seedanceModels = ["Seedance-2.0-mini-480p", "Seedance-2.0-fast-480p", "Seedance-2.0-480p", "Seedance-2.0-mini-720p", "Seedance-2.0-fast-720p", "Seedance-2.0-720p"] as const;
 
 const videoCapabilities: readonly AIHubVideoCapability[] = [
     ...(["omni-fast", "omni-fast-no-water"] as const).map((model) => ({
@@ -357,6 +350,18 @@ export function getAIHubAudioCapability(model: string) {
 
 export function normalizeAIHubSelectValue(capability: AIHubSelectCapability, value: string | undefined) {
     return capability.options.some((option) => option.value === value) ? String(value) : capability.default;
+}
+
+export function normalizeAIHubVideoAspectRatio(capability: AIHubVideoCapability | undefined, value: string | undefined) {
+    if (!capability?.aspectRatio) return value || "";
+    const legacyRatio: Record<string, string> = {
+        "720x1280": "9:16",
+        "1280x720": "16:9",
+        "1024x1024": "1:1",
+        "1024x1792": "2:3",
+        "1792x1024": "3:2",
+    };
+    return normalizeAIHubSelectValue(capability.aspectRatio, legacyRatio[value || ""] || value);
 }
 
 export function normalizeAIHubRangeValue(capability: AIHubRangeCapability, value: string | number | undefined) {

@@ -15,7 +15,7 @@ import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { WorkbenchDiagnosticLogButton } from "@/components/layout/diagnostic-log-modal";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
+import { getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue, normalizeAIHubVideoAspectRatio } from "@/lib/aihub-model-capabilities";
 import { getAIHubVideoReferenceError, isAIHubVideoPromptRequired } from "@/lib/aihub-reference-policy";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
@@ -95,6 +95,19 @@ type GenerationLog = {
 };
 
 type GenerationLogConfig = Pick<AiConfig, "channelMode" | "activeChannelId" | "videoChannelId" | "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoMode" | "videoNegativePrompt" | "videoMultiShot" | "videoShotType" | "videoMultiPrompt" | "videoElementList" | "videoGenerateAudio" | "videoWatermark" | "videoCharacterOrientation">;
+
+type VideoGenerationSnapshot = {
+    text: string;
+    model: string;
+    rawConfig: AiConfig;
+    config: AiConfig;
+    references: ReferenceImage[];
+    firstFrame?: ReferenceImage | null;
+    lastFrame?: ReferenceImage | null;
+    videoReferences: ReferenceVideo[];
+    audioReferences: ReferenceAudio[];
+    taskCount: number;
+};
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 type WorkbenchLayout = "side" | "bottom";
@@ -673,10 +686,11 @@ export default function VideoPage() {
             return null;
         }
         const frameReferencesEnabled = !kling && (capability ? Boolean(capability.references?.frames) : supportsVideoFrameReferences(modelValue));
-        return { text, model: modelValue, config: buildVideoConfig({ ...configValue, videoNegativePrompt: currentNegativePrompt }, modelValue), references: [...referenceItems].slice(0, imageLimit), firstFrame: frameReferencesEnabled ? firstFrameItem : null, lastFrame: frameReferencesEnabled ? lastFrameItem : null, videoReferences: [...videoReferenceItems].slice(0, videoLimit), audioReferences: [...audioReferenceItems].slice(0, audioLimit), taskCount: normalizeVideoCount(taskCountValue) };
+        const normalizedConfig = buildVideoConfig({ ...configValue, videoNegativePrompt: currentNegativePrompt }, modelValue);
+        return { text, model: modelValue, rawConfig: configValue, config: normalizedConfig, references: [...referenceItems].slice(0, imageLimit), firstFrame: frameReferencesEnabled ? firstFrameItem : null, lastFrame: frameReferencesEnabled ? lastFrameItem : null, videoReferences: [...videoReferenceItems].slice(0, videoLimit), audioReferences: [...audioReferenceItems].slice(0, audioLimit), taskCount: normalizeVideoCount(taskCountValue) };
     };
 
-    const submitGenerationSnapshot = async (snapshot: { text: string; model: string; config: AiConfig; references: ReferenceImage[]; firstFrame?: ReferenceImage | null; lastFrame?: ReferenceImage | null; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; taskCount: number }) => {
+    const submitGenerationSnapshot = async (snapshot: VideoGenerationSnapshot) => {
         const diagnosticReferences = [
             diagnosticReferenceSummary("image", snapshot.references),
             diagnosticReferenceSummary("first-frame", snapshot.firstFrame ? [snapshot.firstFrame] : []),
@@ -701,7 +715,8 @@ export default function VideoPage() {
                 ...diagnosticReferenceAssets("last-frame", snapshot.lastFrame ? [snapshot.lastFrame] : []),
             ],
         });
-        appendDiagnosticEvent(diagnosticTaskId, { stage: "config", status: "success", title: "视频配置检查通过", data: { model: snapshot.model, count: snapshot.taskCount, size: snapshot.config.size, resolution: snapshot.config.vquality, seconds: snapshot.config.videoSeconds } });
+        const capability = getAIHubVideoCapability(snapshot.model);
+        appendDiagnosticEvent(diagnosticTaskId, { stage: "config", status: "success", title: "视频配置检查通过", data: { model: snapshot.model, count: snapshot.taskCount, userInput: { size: snapshot.rawConfig.size, resolution: snapshot.rawConfig.vquality, seconds: snapshot.rawConfig.videoSeconds }, normalizedConfig: { size: snapshot.config.size, resolution: snapshot.config.vquality, seconds: snapshot.config.videoSeconds }, modelCapability: capability ? { aspectRatio: capability.aspectRatio ? { default: capability.aspectRatio.default, options: capability.aspectRatio.options.map((item) => item.value) } : undefined, resolution: capability.resolution, duration: capability.duration } : undefined } });
         appendDiagnosticEvent(diagnosticTaskId, { stage: "input", status: "success", title: "已收集视频生成输入", data: { taskCount: snapshot.taskCount } });
         appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "success", title: diagnosticReferences.length ? "参考素材已读取" : "本次提交没有参考素材", data: diagnosticReferences.length ? { references: diagnosticReferences } : undefined });
         setRunning(true);
@@ -733,7 +748,7 @@ export default function VideoPage() {
         }
     };
 
-    const runVideoTask = async (pendingLog: GenerationLog, snapshot: { text: string; model: string; config: AiConfig; references: ReferenceImage[]; firstFrame?: ReferenceImage | null; lastFrame?: ReferenceImage | null; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; taskCount: number }) => {
+    const runVideoTask = async (pendingLog: GenerationLog, snapshot: VideoGenerationSnapshot) => {
         try {
             const created = await createVideoGenerationTask(snapshot.config, snapshot.text, { references: snapshot.references, firstFrame: snapshot.firstFrame, lastFrame: snapshot.lastFrame, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences }, (progress) => {
                 setResults((value) => updateResultByLogId(value, pendingLog.id, { progress }));
@@ -1069,7 +1084,7 @@ export default function VideoPage() {
                 const video = videoFromTaskResponse(task, durationMs);
                 const nextLog = { ...baseLog, status: "成功" as const, video, error: undefined, errorDetail: undefined };
                 await finalizeGenerationLog(nextLog);
-                appendDiagnosticEvent(log.diagnosticTaskId, { stage: "result", status: "success", title: "视频子任务已完成", data: { childLogId: log.id, remoteTaskId: task.id } });
+                appendDiagnosticEvent(log.diagnosticTaskId, { stage: "result", status: "success", title: "视频子任务已完成", data: { childLogId: log.id, remoteTaskId: task.id, output: { width: video.width, height: video.height, durationMs: video.durationMs, bytes: video.bytes, mimeType: video.mimeType, aspectRatio: video.height ? Number((video.width / video.height).toFixed(4)) : undefined } } });
                 if (log.diagnosticTaskId) await finishVideoDiagnosticGroup(log.diagnosticTaskId);
                 setResults((value) => value.filter((item) => item.taskLogId !== log.id && item.id !== log.id));
                 return;
@@ -2873,6 +2888,7 @@ function buildLog({ prompt, model, config, references, firstFrame, lastFrame, vi
 }
 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
+    const aiHubCapability = getAIHubVideoCapability(model);
     const seedance = isSeedanceVideoConfig({ ...config, model });
     const klingV26 = isAPIMartKlingV26Config(config, model);
     const apimartKlingV3 = isAPIMartKlingV3Config(config, model);
@@ -2887,7 +2903,7 @@ function buildVideoConfig(config: AiConfig, model: string): AiConfig {
         videoModel: model,
         videoChannelId,
         activeChannelId: videoChannelId,
-        size: kling ? normalizeKlingV26Ratio(config.size) : seedance ? normalizeSeedanceRatio(config.size) : normalizeVideoSize(config.size),
+        size: kling ? normalizeKlingV26Ratio(config.size) : seedance ? normalizeSeedanceRatio(config.size) : aiHubCapability ? normalizeAIHubVideoAspectRatio(aiHubCapability, config.size) : normalizeVideoSize(config.size),
         videoSeconds: klingV3 ? normalizeKlingV3Seconds(config.videoSeconds) : klingV26 ? normalizeKlingV26Seconds(config.videoSeconds) : normalizeVideoSeconds(config.videoSeconds),
         videoMode,
         videoNegativePrompt: kieKlingV3 ? "" : config.videoNegativePrompt || "",
