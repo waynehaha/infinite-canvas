@@ -75,7 +75,7 @@ export type AIHubVideoCapability = AIHubCapabilityBase & {
     promptFallback?: string;
     aspectRatio?: AIHubSelectCapability;
     duration?: AIHubSelectCapability | AIHubRangeCapability | AIHubFixedCapability;
-    resolution?: AIHubFixedCapability;
+    resolution?: AIHubFixedCapability | AIHubSelectCapability;
     references?: {
         images?: AIHubMediaCapability;
         videos?: AIHubMediaCapability;
@@ -144,12 +144,19 @@ const seedanceRatios = [
     { value: "3:4", label: "标准竖屏" },
 ] as const;
 
-const grokSizes = [
-    { value: "720x1280", label: "竖屏", detail: "9:16" },
-    { value: "1280x720", label: "横屏", detail: "16:9" },
-    { value: "1024x1024", label: "方形", detail: "1:1" },
-    { value: "1024x1792", label: "长竖屏" },
-    { value: "1792x1024", label: "宽横屏" },
+const grokRatios = [
+    { value: "16:9", label: "横屏" },
+    { value: "9:16", label: "竖屏" },
+    { value: "1:1", label: "方形" },
+    { value: "4:3", label: "标准横屏" },
+    { value: "3:4", label: "标准竖屏" },
+    { value: "2:3", label: "经典竖屏" },
+    { value: "3:2", label: "经典横屏" },
+] as const;
+
+const grokResolutions = [
+    { value: "480p", label: "480p" },
+    { value: "720p", label: "720p" },
 ] as const;
 
 const imageCountFour = { mode: "range", default: 1, min: 1, max: 4, step: 1, unit: "张", quick: [1, 2, 3, 4] } as const;
@@ -294,19 +301,19 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
         hidden: ["清晰度", "尺寸", "宽高比", "时长", "生成音频", "水印", "参考图", "参考音频"],
         references: { videos: { max: 1, maxBytes: 20 * 1024 * 1024, required: 1, localOnly: true, note: "必须是本地视频文件" } },
     },
-    ...(["grok-imagine-video", "grok-imagine-video-1.5-preview"] as const).map((model) => ({
+    ...(["grok-imagine-video", "grok-imagine-video-1.5"] as const).map((model) => ({
         kind: "video" as const,
         model,
         status: "documented" as const,
         verifiedAt,
         source,
         endpoint: "/videos",
-        fixedSummary: ["固定 720p 级清晰度"],
-        hidden: ["清晰度", "生成音频", "水印", "参考视频", "参考音频"],
-        aspectRatio: { mode: "select" as const, default: "720x1280", options: grokSizes },
-        duration: { mode: "select" as const, default: "6", options: [6, 10, 12, 16, 20].map((value) => ({ value: String(value), label: `${value} 秒` })) },
-        resolution: { mode: "fixed" as const, value: "720p", label: "720p 级" },
-        references: { images: { max: model.includes("1.5") ? 1 : 7, required: model.includes("1.5") ? 1 : undefined, maxBytes: 20 * 1024 * 1024 } },
+        fixedSummary: ["按次计费", "支持 480p / 720p"],
+        hidden: ["生成音频", "水印", "参考视频", "参考音频"],
+        aspectRatio: { mode: "select" as const, default: "16:9", options: grokRatios },
+        duration: { mode: "range" as const, default: 6, min: 1, max: 15, step: 1, unit: "秒", quick: [6, 10, 15] },
+        resolution: { mode: "select" as const, default: "720p", options: grokResolutions },
+        references: { images: { max: 1, required: model.includes("1.5") ? 1 : undefined, maxBytes: 20 * 1024 * 1024 } },
     })),
 ];
 
@@ -329,7 +336,8 @@ export const AIHUB_MODEL_CAPABILITIES = [...imageCapabilities, ...videoCapabilit
 const capabilityMap = new Map<string, AIHubModelCapability>(AIHUB_MODEL_CAPABILITIES.map((capability) => [capability.model.toLowerCase(), capability]));
 
 export function getAIHubModelCapability(model: string) {
-    return capabilityMap.get(model.trim().toLowerCase());
+    const normalized = model.trim().toLowerCase() === "grok-imagine-video-1.5-preview" ? "grok-imagine-video-1.5" : model.trim().toLowerCase();
+    return capabilityMap.get(normalized);
 }
 
 export function getAIHubImageCapability(model: string) {

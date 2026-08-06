@@ -156,6 +156,7 @@ function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, sh
     const hidden = new Set(capability.hidden);
     const ratio = capability.aspectRatio ? normalizeAIHubSelectValue(capability.aspectRatio, config.size) : "";
     const duration = capability.duration?.mode === "select" ? normalizeAIHubSelectValue(capability.duration, config.videoSeconds) : capability.duration?.mode === "range" ? normalizeAIHubRangeValue(capability.duration, config.videoSeconds) : capability.duration?.value;
+    const resolution = capability.resolution?.mode === "select" ? normalizeAIHubSelectValue(capability.resolution, config.vquality) : capability.resolution?.value;
 
     useEffect(() => {
         if (capability.aspectRatio) {
@@ -172,11 +173,18 @@ function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, sh
             const next = String(capability.duration.value);
             if (next !== config.videoSeconds) onConfigChange("videoSeconds", next);
         }
-        if (capability.resolution && capability.resolution.value !== config.vquality) onConfigChange("vquality", String(capability.resolution.value));
+        if (capability.resolution?.mode === "select") {
+            const next = normalizeAIHubSelectValue(capability.resolution, config.vquality);
+            if (next !== config.vquality) onConfigChange("vquality", next);
+        } else if (capability.resolution && capability.resolution.value !== config.vquality) onConfigChange("vquality", String(capability.resolution.value));
     }, [capability, config.size, config.videoSeconds, config.vquality, onConfigChange]);
 
     const referenceSummary = [
-        capability.references?.images && !hidden.has("参考图") ? `参考图最多 ${capability.references.images.max} 张` : "",
+        capability.references?.images && !hidden.has("参考图")
+            ? capability.references.images.required === capability.references.images.max
+                ? `需要 ${capability.references.images.max} 张参考图`
+                : `参考图最多 ${capability.references.images.max} 张`
+            : "",
         capability.references?.videos && !hidden.has("参考视频")
             ? capability.references.videos.required === capability.references.videos.max
                 ? `需要 ${capability.references.videos.max} 个参考视频`
@@ -196,7 +204,7 @@ function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, sh
                     <span>{capability.fixedSummary.join(" · ")}</span>
                 </div>
                 {capability.aspectRatio && !hidden.has("尺寸") && !hidden.has("宽高比") ? (
-                    <SettingGroup title={capability.model.startsWith("grok-") ? "尺寸" : "画幅比例"} color={theme.node.muted}>
+                    <SettingGroup title="画幅比例" color={theme.node.muted}>
                         <div className={`grid ${compactAspectRatio ? "grid-cols-2 gap-2" : "grid-cols-3 gap-2.5"}`}>
                             {capability.aspectRatio.options.map((item) => {
                                 const preview = capabilityPreview(item.value);
@@ -212,6 +220,11 @@ function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, sh
                                 );
                             })}
                         </div>
+                    </SettingGroup>
+                ) : null}
+                {!visualOnly && capability.resolution?.mode === "select" && !hidden.has("清晰度") ? (
+                    <SettingGroup title="清晰度" color={theme.node.muted}>
+                        <div className="grid grid-cols-2 gap-2.5">{capability.resolution.options.map((item) => <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>{item.label}</OptionPill>)}</div>
                     </SettingGroup>
                 ) : null}
                 {!visualOnly && capability.duration?.mode === "select" && !hidden.has("时长") ? (

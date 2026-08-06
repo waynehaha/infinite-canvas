@@ -18,9 +18,18 @@ export type AIHubVideoBuildInput = {
 
 export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
     const model = input.model.toLowerCase();
-    const capability = getAIHubVideoCapability(input.model);
+    const normalizedModel = model === "grok-imagine-video-1.5-preview" ? "grok-imagine-video-1.5" : model;
+    const capability = getAIHubVideoCapability(normalizedModel);
     const imageCapability = getAIHubImageCapability(input.model);
-    const aspectRatio = capability?.aspectRatio ? normalizeAIHubSelectValue(capability.aspectRatio, input.aspectRatio) : imageCapability?.size ? normalizeAIHubSelectValue(imageCapability.size, input.aspectRatio) : input.aspectRatio;
+    const legacyGrokAspectRatios: Record<string, string> = {
+        "720x1280": "9:16",
+        "1280x720": "16:9",
+        "1024x1024": "1:1",
+        "1024x1792": "2:3",
+        "1792x1024": "3:2",
+    };
+    const requestedAspectRatio = normalizedModel.startsWith("grok-imagine-video") ? legacyGrokAspectRatios[input.aspectRatio] || input.aspectRatio : input.aspectRatio;
+    const aspectRatio = capability?.aspectRatio ? normalizeAIHubSelectValue(capability.aspectRatio, requestedAspectRatio) : imageCapability?.size ? normalizeAIHubSelectValue(imageCapability.size, requestedAspectRatio) : requestedAspectRatio;
     const seconds = capability?.duration?.mode === "fixed"
         ? String(capability.duration.value)
         : capability?.duration?.mode === "range"
@@ -28,6 +37,20 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
           : capability?.duration?.mode === "select"
             ? normalizeAIHubSelectValue(capability.duration, input.seconds)
             : input.seconds;
+    if (normalizedModel.startsWith("grok-imagine-video")) {
+        const references = input.references.slice(0, capability?.references?.images?.max || 1);
+        if (normalizedModel === "grok-imagine-video-1.5" && !references.length) throw new Error("Grok Imagine 1.5 需要至少一张参考图");
+        const resolution = capability?.resolution?.mode === "select" ? normalizeAIHubSelectValue(capability.resolution, input.resolution) : String(capability?.resolution?.value || input.resolution);
+        return {
+            model: normalizedModel,
+            prompt: input.prompt,
+            seconds,
+            aspect_ratio: aspectRatio,
+            resolution,
+            ...(references[0] ? { image: references[0] } : {}),
+        };
+    }
+
     const body = new FormData();
     body.set("model", input.model);
     body.set("prompt", input.prompt);
@@ -51,16 +74,6 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
         body.set("aspect_ratio", aspectRatio);
         if (input.references[0]) body.set("image_url", input.references[0]);
         if (input.references.length > 1) body.set("reference_image_urls", JSON.stringify(input.references.slice(0, maxReferences)));
-        return body;
-    }
-
-    if (model.startsWith("grok-imagine-video")) {
-        const references = input.references.slice(0, capability?.references?.images?.max || 0);
-        if (model.includes("1.5") && !references.length) throw new Error("Grok Imagine 1.5 需要至少一张参考图");
-        body.set("seconds", seconds);
-        body.set("size", aspectRatio);
-        if (references[0]) body.set("image_reference", references[0]);
-        if (references.length > 1) body.set("images", JSON.stringify(references));
         return body;
     }
 

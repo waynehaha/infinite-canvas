@@ -41,6 +41,34 @@ test("默认媒体模型都有能力定义，专用分组模型可以只存在�
 
 test("模型能力查找不区分大小写", () => {
     assert.equal(getAIHubModelCapability("OMNI-FAST")?.model, "omni-fast");
+    assert.equal(getAIHubModelCapability("grok-imagine-video-1.5-preview")?.model, "grok-imagine-video-1.5");
+});
+
+test("Grok 文生视频使用 JSON 协议和文档字段", () => {
+    assert.deepEqual(
+        createAIHubVideoBody(videoInput({ model: "grok-imagine-video", aspectRatio: "1280x720", seconds: "99", resolution: "480p" })),
+        {
+            model: "grok-imagine-video",
+            prompt: "生成视频",
+            seconds: "15",
+            aspect_ratio: "16:9",
+            resolution: "480p",
+        },
+    );
+});
+
+test("Grok 图生视频使用单图 image 字段并兼容 1.5 旧模型名", () => {
+    assert.deepEqual(
+        createAIHubVideoBody(videoInput({ model: "grok-imagine-video-1.5-preview", references: ["https://cdn.example.com/ref.png"], aspectRatio: "720x1280" })),
+        {
+            model: "grok-imagine-video-1.5",
+            prompt: "生成视频",
+            seconds: "6",
+            aspect_ratio: "9:16",
+            resolution: "720p",
+            image: "https://cdn.example.com/ref.png",
+        },
+    );
 });
 
 test("无效枚举和越界数值会回落到能力库允许范围", () => {

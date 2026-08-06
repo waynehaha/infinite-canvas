@@ -85,6 +85,7 @@ function adjustableText(item) {
     if (item.quality) values.push(`质量：${optionText(item.quality)}`);
     if (item.size) values.push(`画幅：${optionText(item.size)}`);
     if (item.aspectRatio) values.push(`${item.model.startsWith("grok-") ? "尺寸" : "比例"}：${optionText(item.aspectRatio)}`);
+    if (item.resolution?.mode === "select") values.push(`清晰度：${optionText(item.resolution)}`);
     if (item.count?.max > 1) values.push(`数量：${item.count.min}–${item.count.max} ${item.count.unit}`);
     if (item.duration?.mode === "select") values.push(`时长：${optionText(item.duration)}`);
     if (item.duration?.mode === "range") values.push(`时长：${item.duration.min}–${item.duration.max} ${item.duration.unit}`);
