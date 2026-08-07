@@ -1,6 +1,6 @@
 "use client";
 
-import { App, Button, Form, Input, Modal, Segmented, Select, Switch } from "antd";
+import { App, Button, Dropdown, Form, Input, Modal, Segmented, Select, Switch } from "antd";
 import { useEffect, useRef, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -9,7 +9,8 @@ import { fetchUserConfig, measureUserStorageProvider, syncUserModelConfig, syncU
 import { clearStorageConfigCache as clearFileStorageCache } from "@/services/file-storage";
 import { clearStorageConfigCache as clearImageStorageCache, defaultUserStorageProvider, loadStorageConfig, saveUserStorageProvider, USER_STORAGE_PROVIDER_KEY, type UserStorageProvider } from "@/services/image-storage";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { applyAIHubModelCatalog, buildBuiltInAIHubModelCatalog, clearPersistedAIHubModelCatalog, loadPersistedAIHubModelCatalog, parseAIHubModelCatalog, type AIHubModelCatalog } from "@/lib/aihub-model-catalog";
+import { applyAIHubModelCatalog, buildBuiltInAIHubModelCatalog, clearPersistedAIHubModelCatalog, loadPersistedAIHubModelCatalog, type AIHubModelCatalog } from "@/lib/aihub-model-catalog";
+import { buildAIHubServiceConfig, buildBuiltInAIHubServiceConfig, diffAIHubServiceConfig, parseAIHubServiceConfig, serviceConfigCatalog, type AIHubServiceConfig } from "@/lib/aihub-service-config";
 import { USER_LOGIN_ENABLED } from "@/lib/user-auth-mode";
 import { filterModelsByCapability, normalizeLocalChannels, useConfigStore, useEffectiveConfig, type AiConfig, type LocalModelChannel, type ModelCapability } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -36,7 +37,7 @@ const modelGroups: ModelGroup[] = [
 ];
 
 export function AppConfigModal() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const [loadingModels, setLoadingModels] = useState(false);
     const [testingChannelId, setTestingChannelId] = useState("");
     const [channelConnectionFeedback, setChannelConnectionFeedback] = useState<Record<string, ChannelConnectionFeedback>>({});
@@ -47,6 +48,7 @@ export function AppConfigModal() {
     const [measuringStorage, setMeasuringStorage] = useState(false);
     const [storageUsageText, setStorageUsageText] = useState("");
     const [modelCatalog, setModelCatalog] = useState<AIHubModelCatalog | null>(null);
+    const [serviceConfig, setServiceConfig] = useState<AIHubServiceConfig | null>(null);
     const modelCatalogInputRef = useRef<HTMLInputElement>(null);
     const config = useConfigStore((state) => state.config);
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -69,8 +71,12 @@ export function AppConfigModal() {
 
     useEffect(() => {
         if (!isConfigOpen) return;
-        setModelCatalog(loadPersistedAIHubModelCatalog());
-    }, [isConfigOpen]);
+        const catalog = loadPersistedAIHubModelCatalog();
+        setModelCatalog(catalog);
+        setServiceConfig(
+            buildAIHubServiceConfig(catalog || buildBuiltInAIHubModelCatalog(), normalizeLocalChannels(config)[0]?.baseUrl || config.baseUrl, { image: config.imageModel, video: config.videoModel, text: config.textModel, audio: config.audioModel }),
+        );
+    }, [config.audioModel, config.baseUrl, config.imageModel, config.textModel, config.videoModel, isConfigOpen]);
 
     useEffect(() => {
         try {
@@ -187,44 +193,75 @@ export function AppConfigModal() {
         }
     };
 
-    const updateAIHubModelsFromCatalog = (catalog: AIHubModelCatalog) => {
-        const enabledModels = catalog.models.filter((entry) => entry.enabled).map((entry) => entry.model);
+    const applyServiceConfig = (next: AIHubServiceConfig) => {
+        const enabledModels = next.models.filter((entry) => entry.enabled).map((entry) => entry.model);
         const channels = normalizeLocalChannels(config);
-        const nextChannels = channels.map((channel) => (channel.id === "aihub" || channel.baseUrl.replace(/\/+$/, "").toLowerCase() === "https://aihubcc.cc/v1" ? { ...channel, models: enabledModels } : channel));
-        applyAIHubModelCatalog(catalog);
-        setModelCatalog(catalog);
+        const nextChannels = channels.map((channel) => (channel.id === "aihub" ? { ...channel, baseUrl: next.service.baseUrl, models: enabledModels } : channel));
+        applyAIHubModelCatalog(serviceConfigCatalog(next));
+        setModelCatalog(serviceConfigCatalog(next));
+        setServiceConfig(next);
         updateLocalChannels(nextChannels);
+        updateConfig("imageModel", next.defaults.image);
+        updateConfig("videoModel", next.defaults.video);
+        updateConfig("textModel", next.defaults.text);
+        updateConfig("audioModel", next.defaults.audio);
     };
 
-    const importModelCatalog = async (file: File) => {
+    const importServiceConfig = async (file: File) => {
         try {
-            const catalog = parseAIHubModelCatalog(await file.text());
-            updateAIHubModelsFromCatalog(catalog);
-            message.success(`模型配置已导入，共 ${catalog.models.filter((entry) => entry.enabled).length} 个可用模型`);
+            const current =
+                serviceConfig ||
+                buildAIHubServiceConfig(modelCatalog || buildBuiltInAIHubModelCatalog(), normalizeLocalChannels(config)[0]?.baseUrl || config.baseUrl, {
+                    image: config.imageModel,
+                    video: config.videoModel,
+                    text: config.textModel,
+                    audio: config.audioModel,
+                });
+            const next = parseAIHubServiceConfig(await file.text(), { baseUrl: current.service.baseUrl, defaults: current.defaults });
+            const diff = diffAIHubServiceConfig(current, next);
+            const changes = `新增模型：${diff.added} 个 · 更新模型：${diff.updated} 个 · 停用/移除：${diff.disabled} 个`;
+            const baseUrlText = diff.baseUrlChanged ? `\nBase URL：${diff.previousBaseUrl} → ${diff.nextBaseUrl}\n请确认新的服务地址可信。` : "\nBase URL：未变化";
+            modal.confirm({
+                title: "确认应用 AIHub 服务配置？",
+                content: (
+                    <div className="whitespace-pre-line text-sm text-stone-500">
+                        {changes}
+                        {baseUrlText}
+                    </div>
+                ),
+                okText: "确认应用",
+                cancelText: "取消",
+                onOk: () => {
+                    applyServiceConfig(next);
+                    message.success(`AIHub 服务配置已应用，共 ${next.models.filter((entry) => entry.enabled).length} 个可用模型`);
+                },
+            });
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "模型配置导入失败");
+            message.error(error instanceof Error ? error.message : "AIHub 服务配置导入失败");
         } finally {
             if (modelCatalogInputRef.current) modelCatalogInputRef.current.value = "";
         }
     };
 
-    const exportModelCatalog = () => {
-        const catalog = modelCatalog || buildBuiltInAIHubModelCatalog();
-        const blob = new Blob([JSON.stringify(catalog, null, 2)], { type: "application/json;charset=utf-8" });
+    const exportServiceConfig = () => {
+        const current =
+            serviceConfig ||
+            buildAIHubServiceConfig(modelCatalog || buildBuiltInAIHubModelCatalog(), normalizeLocalChannels(config)[0]?.baseUrl || config.baseUrl, { image: config.imageModel, video: config.videoModel, text: config.textModel, audio: config.audioModel });
+        const blob = new Blob([JSON.stringify(current, null, 2)], { type: "application/json;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement("a");
         anchor.href = url;
-        anchor.download = `aihub-model-catalog-${catalog.updatedAt.slice(0, 10)}.json`;
+        anchor.download = `aihub-service-config-${current.updatedAt.slice(0, 10)}.json`;
         anchor.click();
         URL.revokeObjectURL(url);
-        message.success("模型配置已导出");
+        message.success("AIHub 服务配置已导出");
     };
 
-    const restoreBuiltInModelCatalog = () => {
+    const restoreBuiltInServiceConfig = () => {
         clearPersistedAIHubModelCatalog();
-        updateAIHubModelsFromCatalog(buildBuiltInAIHubModelCatalog());
+        applyServiceConfig(buildBuiltInAIHubServiceConfig());
         setModelCatalog(null);
-        message.success("已恢复内置模型配置");
+        message.success("已恢复内置 AIHub 服务配置");
     };
 
     const updateLocalChannels = (channels: LocalModelChannel[]) => {
@@ -392,8 +429,8 @@ export function AppConfigModal() {
                             </div>
                             <div className="mb-5 flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-2 dark:border-stone-800">
                                 <div className="min-w-0">
-                                    <div className="text-sm font-medium">模型列表</div>
-                                    <div className="mt-1 text-xs text-stone-500">当前已保存 {config.models.length} 个模型</div>
+                                    <div className="text-sm font-medium">模型目录</div>
+                                    <div className="mt-1 text-xs text-stone-500">当前已保存 {config.models.length} 个模型 · AIHub 服务配置</div>
                                 </div>
                                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                                     {USER_LOGIN_ENABLED ? (
@@ -405,20 +442,31 @@ export function AppConfigModal() {
                                     <Button size="small" loading={loadingModels} disabled={Boolean(testingChannelId)} onClick={() => void refreshModels()}>
                                         更新全部模型
                                     </Button>
+                                    <Dropdown
+                                        menu={{
+                                            items: [{ key: "import", label: "导入 AIHub 服务配置" }, { key: "export", label: "导出 AIHub 服务配置" }, ...(modelCatalog ? [{ key: "restore", label: "恢复内置服务配置" }] : [])],
+                                            onClick: ({ key }) => {
+                                                if (key === "import") modelCatalogInputRef.current?.click();
+                                                if (key === "export") exportServiceConfig();
+                                                if (key === "restore") restoreBuiltInServiceConfig();
+                                            },
+                                        }}
+                                        trigger={["click"]}
+                                    >
+                                        <Button size="small">更多</Button>
+                                    </Dropdown>
                                 </div>
                             </div>
-                            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-stone-300 bg-stone-50/60 px-3 py-2 dark:border-stone-700 dark:bg-stone-900/50">
-                                <div className="min-w-0">
-                                    <div className="text-sm font-medium">模型配置文件</div>
-                                    <div className="mt-1 text-xs text-stone-500">导入模型目录和能力参数，不包含 API Key；当前 {modelCatalog ? `使用 ${modelCatalog.updatedAt.slice(0, 10)} 的配置` : "使用内置配置"}。</div>
-                                </div>
-                                <div className="flex shrink-0 flex-wrap gap-2">
-                                    <input ref={modelCatalogInputRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importModelCatalog(file); }} />
-                                    <Button size="small" onClick={() => modelCatalogInputRef.current?.click()}>导入配置</Button>
-                                    <Button size="small" onClick={exportModelCatalog}>导出配置</Button>
-                                    {modelCatalog ? <Button size="small" onClick={restoreBuiltInModelCatalog}>恢复内置</Button> : null}
-                                </div>
-                            </div>
+                            <input
+                                ref={modelCatalogInputRef}
+                                type="file"
+                                accept="application/json,.json"
+                                className="hidden"
+                                onChange={(event) => {
+                                    const file = event.target.files?.[0];
+                                    if (file) void importServiceConfig(file);
+                                }}
+                            />
                         </>
                     ) : (
                         <div className="mb-5 rounded-lg border border-stone-200 p-3 text-sm text-stone-500 dark:border-stone-800">
