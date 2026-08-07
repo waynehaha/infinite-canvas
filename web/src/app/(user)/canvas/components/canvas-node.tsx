@@ -464,7 +464,8 @@ function LoadingContent({ node, theme, now }: Pick<NodeContentRendererProps, "no
     const startedAt = typeof node.metadata?.startedAt === "number" ? node.metadata.startedAt : startTimeRef.current;
     const elapsedMs = Math.max(0, currentNow - startedAt);
     const progress = Math.max(0, Math.min(100, Math.round(node.metadata?.progress || 0)));
-    const isFetchingVideo = node.type === CanvasNodeType.Video && progress >= 100;
+    const isDownloadingVideo = node.type === CanvasNodeType.Video && node.metadata?.videoStage === "downloading";
+    const isFetchingVideo = node.type === CanvasNodeType.Video && (isDownloadingVideo || progress >= 100);
     const isRetryingVideoFetch = isFetchingVideo && Boolean(node.metadata?.errorDetails);
 
     if (node.type === CanvasNodeType.Video) {
@@ -475,7 +476,7 @@ function LoadingContent({ node, theme, now }: Pick<NodeContentRendererProps, "no
                     {isFetchingVideo ? (
                         <div className="text-center font-semibold leading-5" style={{ color: selectionBlue }}>
                             <div className="text-sm">{isRetryingVideoFetch ? "结果暂未就绪" : "生成完成"}</div>
-                            <div className="text-xs">{isRetryingVideoFetch ? "正在自动重试" : "正在获取视频"}</div>
+                            <div className="text-xs">{isRetryingVideoFetch ? "正在自动重试" : "正在下载视频"}</div>
                         </div>
                     ) : (
                         <div className="text-sm font-semibold" style={{ color: selectionBlue }}>正在创作 {progress}%</div>
@@ -486,11 +487,11 @@ function LoadingContent({ node, theme, now }: Pick<NodeContentRendererProps, "no
                 </div>
                 <div className="space-y-1">
                     <div className="flex items-center justify-between text-[11px]" style={{ color: theme.node.muted }}>
-                        <span>{isFetchingVideo ? isRetryingVideoFetch ? "自动重试中" : "正在保存结果" : "当前创作进度"}</span>
-                        <span>{progress}%</span>
+                        <span>{isFetchingVideo ? isRetryingVideoFetch ? "自动重试中" : "下载中" : "当前创作进度"}</span>
+                        <span>{isFetchingVideo ? "—" : `${progress}%`}</span>
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full" style={{ background: theme.node.stroke }}>
-                        <div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, background: selectionBlue }} />
+                        <div className={`h-full rounded-full transition-all ${isFetchingVideo ? "w-1/3 animate-pulse" : ""}`} style={isFetchingVideo ? { background: selectionBlue } : { width: `${progress}%`, background: selectionBlue }} />
                     </div>
                 </div>
             </div>

@@ -558,7 +558,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 pollingVideoNodeIdsRef.current.add(node.id);
                 void pollVideoGenerationTaskStatus(generationConfig, canvasVideoTaskFromMetadata(node.metadata), (task) => {
                     appendDiagnosticEvent(diagnosticTaskId, { stage: "polling", status: "info", title: "视频任务状态已更新", detail: task.status || "处理中", data: { progressBucket: diagnosticProgressBucket(task.progress), remoteTaskId: taskId } });
-                    setNodes((prev) => applyCanvasVideoTaskProgressUpdate(prev, node.id, task, taskId, generationConfig, node.metadata?.startedAt || Date.now()));
+                    const completed = canvasVideoTaskCompleted(task);
+                    setNodes((prev) => applyCanvasVideoTaskProgressUpdate(prev, node.id, task, taskId, generationConfig, node.metadata?.startedAt || Date.now(), completed ? "downloading" : "generating"));
                 })
                     .then((task) => {
                         setNodes((prev) => applyCanvasVideoTaskUpdate(prev, node.id, task, taskId, generationConfig, node.metadata?.startedAt || Date.now(), { width: node.width, height: node.height }));
@@ -2955,7 +2956,10 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                             klingElementList: sourceNode?.metadata?.klingElementList,
                             startedAt: generationStartedAt,
                             progress: 0,
-                            videoTaskId: clientTaskId,
+                            videoStage: "generating",
+                            // The client ID is only an idempotency key. Polling must wait for the
+                            // server-generated task ID returned by createVideoGenerationTask.
+                            videoTaskId: undefined,
                         },
                     };
                     pendingChildIds = [videoId];
@@ -3596,7 +3600,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                   storageKey: "",
                                   progress: 0,
                                   startedAt: retryStartedAt,
-                                  ...(item.type === CanvasNodeType.Video ? { videoTaskId: retryVideoTaskId, videoTaskVideoId: undefined } : {}),
+                                  ...(item.type === CanvasNodeType.Video ? { videoStage: "generating", videoTaskId: undefined, videoTaskVideoId: undefined } : {}),
                                   ...(isCanvasImageNodeType(item.type) ? { imageTaskId: retryImageTaskId, imageTaskResultId: undefined } : {}),
                                   ...(item.type === CanvasNodeType.Audio ? { audioTaskId: retryAudioTaskId, audioTaskResultId: undefined } : {}),
                               },
@@ -4819,6 +4823,7 @@ function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
             progress,
             videoTaskId: taskIds.pollId,
             videoTaskVideoId: taskIds.providerId || node.metadata?.videoTaskVideoId,
+            videoStage: completed ? (url ? undefined : "downloading") : "generating",
         };
         if (!completed || !url) return { ...node, metadata };
         const taskSize = parseCanvasVideoTaskSize(task.size, fallbackSize);
@@ -4843,7 +4848,7 @@ function applyCanvasVideoTaskUpdate(nodes: CanvasNodeData[], nodeId: string, tas
     });
 }
 
-function applyCanvasVideoTaskProgressUpdate(nodes: CanvasNodeData[], nodeId: string, task: VideoResponse, pollId: string, config: AiConfig, startedAt: number) {
+function applyCanvasVideoTaskProgressUpdate(nodes: CanvasNodeData[], nodeId: string, task: VideoResponse, pollId: string, config: AiConfig, startedAt: number, videoStage: "generating" | "downloading") {
     return nodes.map((node) => {
         if (node.id !== nodeId) return node;
         const taskIds = resolveVideoTaskIds(task.model || config.model, task, pollId);
@@ -4861,6 +4866,7 @@ function applyCanvasVideoTaskProgressUpdate(nodes: CanvasNodeData[], nodeId: str
                 durationMs: Date.now() - taskStartedAt,
                 videoTaskId: taskIds.pollId,
                 videoTaskVideoId: taskIds.providerId || node.metadata?.videoTaskVideoId,
+                videoStage,
             },
         };
     });
