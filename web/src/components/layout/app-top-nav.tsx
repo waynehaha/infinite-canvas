@@ -68,7 +68,7 @@ export function AppTopNav() {
                             </nav>
                         </div>
 
-                        <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
+                        <div className="my-auto flex h-9 min-w-0 translate-x-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap md:translate-x-6">
                             <UserStatusActions />
                         </div>
                     </div>
