@@ -1,4 +1,4 @@
-import { isAIHubOmniModel, isAIHubSeedanceModel } from "@/lib/aihub-models";
+import { aihubModelAdapter, isAIHubOmniModel, isAIHubSeedanceModel } from "@/lib/aihub-models";
 import { getAIHubImageCapability, getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue, normalizeAIHubVideoAspectRatio } from "@/lib/aihub-model-capabilities";
 
 export type AIHubMediaValue = string | File;
@@ -19,6 +19,7 @@ export type AIHubVideoBuildInput = {
 export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
     const model = input.model.toLowerCase();
     const normalizedModel = model === "grok-imagine-video-1.5-preview" ? "grok-imagine-video-1.5" : model;
+    const adapter = aihubModelAdapter(normalizedModel);
     const capability = getAIHubVideoCapability(normalizedModel);
     const imageCapability = getAIHubImageCapability(input.model);
     const aspectRatio = capability?.aspectRatio ? normalizeAIHubVideoAspectRatio(capability, input.aspectRatio) : imageCapability?.size ? normalizeAIHubSelectValue(imageCapability.size, input.aspectRatio) : input.aspectRatio;
@@ -30,7 +31,7 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
               : capability?.duration?.mode === "select"
                 ? normalizeAIHubSelectValue(capability.duration, input.seconds)
                 : input.seconds;
-    if (normalizedModel.startsWith("grok-imagine-video")) {
+    if (adapter === "video-grok") {
         const references = input.references.slice(0, capability?.references?.images?.max || 1);
         if (normalizedModel === "grok-imagine-video-1.5" && !references.length) throw new Error("Grok Imagine 1.5 需要至少一张参考图");
         const resolution = capability?.resolution?.mode === "select" ? normalizeAIHubSelectValue(capability.resolution, input.resolution) : String(capability?.resolution?.value || input.resolution);
@@ -70,7 +71,7 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
         return body;
     }
 
-    if (model === "veo-clean") {
+    if (adapter === "video-clean") {
         const source = input.videoReferences[0];
         if (!source) throw new Error("Veo-Clean 需要上传一个待去水印视频");
         if (!(source instanceof File)) throw new Error("Veo-Clean 需要上传本地视频文件");

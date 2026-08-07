@@ -27,7 +27,7 @@ const videoInput = (overrides: Record<string, unknown> = {}) => ({
     ...overrides,
 });
 
-test("默认媒体模型都有能力定义，专用分组模型可以只存在于能力库", () => {
+test("默认媒体模型都有能力定义，专用模型能力也可单独维护", () => {
     for (const capability of AIHUB_MODEL_CAPABILITIES) {
         assert.ok(capability.source.startsWith("https://"));
         assert.match(capability.verifiedAt, /^\d{4}-\d{2}-\d{2}$/);
@@ -35,7 +35,8 @@ test("默认媒体模型都有能力定义，专用分组模型可以只存在�
     for (const model of AIHUB_DEFAULT_MODELS.filter((item) => aihubModelCapability(item) !== "text")) {
         assert.ok(getAIHubModelCapability(model), `${model} 缺少能力定义`);
     }
-    assert.equal(AIHUB_DEFAULT_MODELS.includes("grok-imagine-video"), false);
+    assert.equal(AIHUB_DEFAULT_MODELS.includes("grok-imagine-video"), true);
+    assert.equal(AIHUB_DEFAULT_MODELS.includes("grok-imagine-video-1.5"), true);
     assert.ok(getAIHubModelCapability("grok-imagine-video"));
 });
 

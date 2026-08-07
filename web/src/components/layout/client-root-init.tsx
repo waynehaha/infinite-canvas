@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { App } from "antd";
 
 import { fetchUserConfig } from "@/services/api/user-config";
+import { loadPersistedAIHubModelCatalog } from "@/lib/aihub-model-catalog";
 import { defaultUserStorageProvider, saveUserStorageProvider } from "@/services/image-storage";
 import { runDesktopDataProtection } from "@/services/desktop-data-protection";
 import { USER_LOGIN_ENABLED, shouldClearUserSession } from "@/lib/user-auth-mode";
@@ -28,6 +29,10 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const isLoginPage = pathname === "/login" || pathname === "/admin/login";
     const adminRemoteTokenRef = useRef("");
+
+    useEffect(() => {
+        loadPersistedAIHubModelCatalog();
+    }, []);
 
     useEffect(() => {
         void runDesktopDataProtection()

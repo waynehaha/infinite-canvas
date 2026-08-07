@@ -33,6 +33,12 @@ test("旧 AIHub 默认列表会升级且保留用户 Key", () => {
     assert.deepEqual(channel.models, AIHUB_DEFAULT_MODELS);
 });
 
+test("上一版 28 个 AIHub 默认模型会补入 Grok 视频模型", () => {
+    const previousModels = AIHUB_DEFAULT_MODELS.filter((model) => !["grok-imagine-video", "grok-imagine-video-1.5"].includes(model));
+    const [channel] = normalizeLocalChannels({ localChannels: [{ id: "aihub", name: "AIHub", baseUrl: AIHUB_BASE_URL, apiKey: "", models: previousModels }] });
+    assert.deepEqual(channel.models, AIHUB_DEFAULT_MODELS);
+});
+
 test("用户自定义的 AIHub 模型列表不会被覆盖", () => {
     const custom = ["my-private-model"];
     const [channel] = normalizeLocalChannels({ localChannels: [{ id: "aihub", name: "AIHub", baseUrl: AIHUB_BASE_URL, apiKey: "", models: custom }] });

@@ -327,10 +327,25 @@ const audioCapabilities: readonly AIHubAudioCapability[] = [
 export const AIHUB_MODEL_CAPABILITIES = [...imageCapabilities, ...videoCapabilities, ...audioCapabilities] as const satisfies readonly AIHubModelCapability[];
 
 const capabilityMap = new Map<string, AIHubModelCapability>(AIHUB_MODEL_CAPABILITIES.map((capability) => [capability.model.toLowerCase(), capability]));
+let runtimeCapabilityMap = new Map<string, AIHubModelCapability>();
+
+export function setAIHubRuntimeCapabilities(capabilities: AIHubModelCapability[]) {
+    runtimeCapabilityMap = new Map(capabilities.map((capability) => [capability.model.trim().toLowerCase(), capability]));
+}
+
+export function clearAIHubRuntimeCapabilities() {
+    runtimeCapabilityMap = new Map();
+}
+
+export function getAIHubActiveCapabilities() {
+    const merged = new Map(capabilityMap);
+    runtimeCapabilityMap.forEach((capability, model) => merged.set(model, capability));
+    return [...merged.values()];
+}
 
 export function getAIHubModelCapability(model: string) {
     const normalized = model.trim().toLowerCase() === "grok-imagine-video-1.5-preview" ? "grok-imagine-video-1.5" : model.trim().toLowerCase();
-    return capabilityMap.get(normalized);
+    return runtimeCapabilityMap.get(normalized) || capabilityMap.get(normalized);
 }
 
 export function getAIHubImageCapability(model: string) {

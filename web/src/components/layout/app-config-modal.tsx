@@ -1,7 +1,7 @@
 "use client";
 
 import { App, Button, Form, Input, Modal, Segmented, Select, Switch } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { fetchImageModels, ModelListRequestError } from "@/services/api/image";
@@ -9,6 +9,7 @@ import { fetchUserConfig, measureUserStorageProvider, syncUserModelConfig, syncU
 import { clearStorageConfigCache as clearFileStorageCache } from "@/services/file-storage";
 import { clearStorageConfigCache as clearImageStorageCache, defaultUserStorageProvider, loadStorageConfig, saveUserStorageProvider, USER_STORAGE_PROVIDER_KEY, type UserStorageProvider } from "@/services/image-storage";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
+import { applyAIHubModelCatalog, buildBuiltInAIHubModelCatalog, clearPersistedAIHubModelCatalog, loadPersistedAIHubModelCatalog, parseAIHubModelCatalog, type AIHubModelCatalog } from "@/lib/aihub-model-catalog";
 import { USER_LOGIN_ENABLED } from "@/lib/user-auth-mode";
 import { filterModelsByCapability, normalizeLocalChannels, useConfigStore, useEffectiveConfig, type AiConfig, type LocalModelChannel, type ModelCapability } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -45,6 +46,8 @@ export function AppConfigModal() {
     const [userStorage, setUserStorage] = useState<UserStorageProvider>(() => defaultUserStorageProvider());
     const [measuringStorage, setMeasuringStorage] = useState(false);
     const [storageUsageText, setStorageUsageText] = useState("");
+    const [modelCatalog, setModelCatalog] = useState<AIHubModelCatalog | null>(null);
+    const modelCatalogInputRef = useRef<HTMLInputElement>(null);
     const config = useConfigStore((state) => state.config);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
@@ -63,6 +66,11 @@ export function AppConfigModal() {
     const localModelConfig: AiConfig = effectiveMode === "local" && config.channelMode !== "local" ? { ...config, channelMode: "local" } : config;
     const modelConfig = effectiveMode === "remote" ? effectiveConfig : localModelConfig;
     const canUseUserStorageProvider = isLoggedIn && allowUserStorageProvider;
+
+    useEffect(() => {
+        if (!isConfigOpen) return;
+        setModelCatalog(loadPersistedAIHubModelCatalog());
+    }, [isConfigOpen]);
 
     useEffect(() => {
         try {
@@ -177,6 +185,46 @@ export function AppConfigModal() {
         } finally {
             setLoadingModels(false);
         }
+    };
+
+    const updateAIHubModelsFromCatalog = (catalog: AIHubModelCatalog) => {
+        const enabledModels = catalog.models.filter((entry) => entry.enabled).map((entry) => entry.model);
+        const channels = normalizeLocalChannels(config);
+        const nextChannels = channels.map((channel) => (channel.id === "aihub" || channel.baseUrl.replace(/\/+$/, "").toLowerCase() === "https://aihubcc.cc/v1" ? { ...channel, models: enabledModels } : channel));
+        applyAIHubModelCatalog(catalog);
+        setModelCatalog(catalog);
+        updateLocalChannels(nextChannels);
+    };
+
+    const importModelCatalog = async (file: File) => {
+        try {
+            const catalog = parseAIHubModelCatalog(await file.text());
+            updateAIHubModelsFromCatalog(catalog);
+            message.success(`模型配置已导入，共 ${catalog.models.filter((entry) => entry.enabled).length} 个可用模型`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "模型配置导入失败");
+        } finally {
+            if (modelCatalogInputRef.current) modelCatalogInputRef.current.value = "";
+        }
+    };
+
+    const exportModelCatalog = () => {
+        const catalog = modelCatalog || buildBuiltInAIHubModelCatalog();
+        const blob = new Blob([JSON.stringify(catalog, null, 2)], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `aihub-model-catalog-${catalog.updatedAt.slice(0, 10)}.json`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+        message.success("模型配置已导出");
+    };
+
+    const restoreBuiltInModelCatalog = () => {
+        clearPersistedAIHubModelCatalog();
+        updateAIHubModelsFromCatalog(buildBuiltInAIHubModelCatalog());
+        setModelCatalog(null);
+        message.success("已恢复内置模型配置");
     };
 
     const updateLocalChannels = (channels: LocalModelChannel[]) => {
@@ -357,6 +405,18 @@ export function AppConfigModal() {
                                     <Button size="small" loading={loadingModels} disabled={Boolean(testingChannelId)} onClick={() => void refreshModels()}>
                                         更新全部模型
                                     </Button>
+                                </div>
+                            </div>
+                            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-stone-300 bg-stone-50/60 px-3 py-2 dark:border-stone-700 dark:bg-stone-900/50">
+                                <div className="min-w-0">
+                                    <div className="text-sm font-medium">模型配置文件</div>
+                                    <div className="mt-1 text-xs text-stone-500">导入模型目录和能力参数，不包含 API Key；当前 {modelCatalog ? `使用 ${modelCatalog.updatedAt.slice(0, 10)} 的配置` : "使用内置配置"}。</div>
+                                </div>
+                                <div className="flex shrink-0 flex-wrap gap-2">
+                                    <input ref={modelCatalogInputRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importModelCatalog(file); }} />
+                                    <Button size="small" onClick={() => modelCatalogInputRef.current?.click()}>导入配置</Button>
+                                    <Button size="small" onClick={exportModelCatalog}>导出配置</Button>
+                                    {modelCatalog ? <Button size="small" onClick={restoreBuiltInModelCatalog}>恢复内置</Button> : null}
                                 </div>
                             </div>
                         </>

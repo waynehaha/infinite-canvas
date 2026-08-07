@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "catalogId": "aihub-model-catalog",
+  "updatedAt": "2026-08-07T00:00:00.000Z",
+  "source": "https://aihubcc.cc/pricing",
+  "models": [
+    {
+      "model": "gemini-3.5-flash",
+      "kind": "text",
+      "enabled": true,
+      "adapter": "text-generic"
+    },
+    {
+      "model": "grok-imagine-video-1.5",
+      "kind": "video",
+      "enabled": true,
+      "adapter": "video-grok",
+      "capability": {
+        "kind": "video",
+        "model": "grok-imagine-video-1.5",
+        "status": "documented",
+        "verifiedAt": "2026-07-31",
+        "source": "https://oq2vmod9er.feishu.cn/docx/KUyVd0qmdotG0Hx2v5SczraGnbc",
+        "endpoint": "/videos",
+        "fixedSummary": ["按次计费", "支持 480p / 720p"],
+        "hidden": ["生成音频", "水印", "参考视频", "参考音频"],
+        "aspectRatio": {
+          "mode": "select",
+          "default": "16:9",
+          "options": [{"value": "16:9", "label": "横屏"}, {"value": "9:16", "label": "竖屏"}]
+        },
+        "duration": {"mode": "range", "default": 6, "min": 1, "max": 15, "step": 1, "unit": "秒"},
+        "resolution": {
+          "mode": "select",
+          "default": "720p",
+          "options": [{"value": "480p", "label": "480p"}, {"value": "720p", "label": "720p"}]
+        },
+        "references": {"images": {"max": 1, "required": 1, "maxBytes": 20971520}}
+      }
+    }
+  ]
+}
