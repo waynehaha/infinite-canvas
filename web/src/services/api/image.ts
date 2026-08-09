@@ -12,6 +12,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { appendDiagnosticEvent } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
 import { nanoid } from "nanoid";
+import { assertChatRequestSafety } from "@/lib/chat-request-guard";
 
 export type ChatCompletionMessage = {
     role: "system" | "user" | "assistant";
@@ -1091,15 +1092,17 @@ export async function requestImageQuestion(config: AiConfig, messages: ChatCompl
     let buffer = "";
     let answer = "";
     let processedLength = 0;
+    const body = {
+        model: config.model,
+        messages: withSystemMessage(config, messages),
+        stream: true,
+    };
+    assertChatRequestSafety(body);
 
     try {
         const response = await axios.post(
             aiApiUrl(config, "/chat/completions"),
-            {
-                model: config.model,
-                messages: withSystemMessage(config, messages),
-                stream: true,
-            },
+            body,
             {
                 headers: {
                     ...aiHeaders(config, "application/json"),

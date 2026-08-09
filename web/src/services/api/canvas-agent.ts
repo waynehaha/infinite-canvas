@@ -2,6 +2,7 @@ import { aiApiUrl, aiHeaders, refreshRemoteUser } from "@/services/api/image";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { CanvasAgentProtocolMessage, CanvasAgentToolCall } from "@/app/(user)/canvas/types";
 import type { CanvasAgentToolDefinition } from "@/app/(user)/canvas/agent/canvas-agent-tools";
+import { assertChatRequestSafety } from "@/lib/chat-request-guard";
 
 export type CanvasAgentModelTurn = {
     content: string;
@@ -99,6 +100,7 @@ async function requestCompletion(config: AiConfig, systemPrompt: string, message
         body.tools = tools;
         body.tool_choice = "auto";
     }
+    assertChatRequestSafety(body);
 
     const response = await fetch(aiApiUrl(config, "/chat/completions"), {
         method: "POST",
