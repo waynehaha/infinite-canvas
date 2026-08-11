@@ -26,6 +26,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { createCanvasAgentState, runCanvasAgent } from "../agent/canvas-agent-runtime";
+import { shouldSendCanvasAgentVisualReferences } from "../agent/canvas-agent-reference-policy";
 import type { CanvasAgentContext } from "../agent/canvas-agent-context";
 import type { CanvasAgentAction, CanvasAgentToolResult } from "../agent/canvas-agent-tools";
 import {
@@ -243,16 +244,20 @@ export function CanvasAssistantPanel({
         abortRef.current = controller;
         setIsRunning(true);
         try {
-            const modelReferences = await Promise.all(
-                references.map(async (reference) => {
-                    if (!reference.dataUrl) return reference;
-                    try {
-                        return { ...reference, dataUrl: await imageToDataUrl(reference) };
-                    } catch {
-                        return reference;
-                    }
-                }),
-            );
+            const modelReferences = shouldSendCanvasAgentVisualReferences(text)
+                ? await Promise.all(
+                      references.map(async (reference) => {
+                          const publicUrl = [reference.dataUrl, reference.url].find((url) => /^https?:\/\//.test(url || ""));
+                          if (publicUrl) return { ...reference, dataUrl: publicUrl };
+                          if (!reference.dataUrl && !reference.storageKey) return reference;
+                          try {
+                              return { ...reference, dataUrl: await imageToDataUrl(reference) };
+                          } catch {
+                              return reference;
+                          }
+                      }),
+                  )
+                : references;
             const result = await runCanvasAgent({
                 config: requestConfig,
                 initialState: session.agentState,

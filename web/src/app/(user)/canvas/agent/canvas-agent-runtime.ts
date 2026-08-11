@@ -8,6 +8,7 @@ import type {
     CanvasAssistantReference,
 } from "../types";
 import type { CanvasAgentContext } from "./canvas-agent-context";
+import { shouldSendCanvasAgentVisualReferences } from "./canvas-agent-reference-policy";
 import { buildCanvasAgentSkillPrompt } from "./canvas-agent-skills";
 import {
     CANVAS_AGENT_TOOLS,
@@ -180,12 +181,13 @@ async function executeActions(
 
 function buildUserContent(text: string, references: CanvasAssistantReference[], modelName: string): CanvasAgentContent {
     const referenceText = references.length ? "\n\n本次明确引用的真实节点：" + references.map((item) => item.id + "（" + item.title + "）").join("、") : "";
-    const images = supportsCanvasAgentImageInput(modelName)
-        ? references.flatMap((item) => {
-            const url = item.dataUrl;
-            return url && (/^data:image\//.test(url) || /^https?:\/\//.test(url)) ? [{ type: "image_url" as const, image_url: { url } }] : [];
-        })
-        : [];
+    const images =
+        shouldSendCanvasAgentVisualReferences(text) && supportsCanvasAgentImageInput(modelName)
+            ? references.flatMap((item) => {
+                  const url = item.dataUrl;
+                  return url && (/^data:image\//.test(url) || /^https?:\/\//.test(url)) ? [{ type: "image_url" as const, image_url: { url } }] : [];
+              })
+            : [];
     if (!images.length) return text + referenceText;
     return [{ type: "text", text: text + referenceText }, ...images];
 }
