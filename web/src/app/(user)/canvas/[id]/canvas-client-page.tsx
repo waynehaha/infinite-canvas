@@ -14,6 +14,7 @@ import { createVideoGenerationTask, pollVideoGenerationTaskStatus, VideoRequestE
 import { resolveVideoTaskIds } from "@/services/api/video-polling";
 import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, diagnosticReferenceAssets, diagnosticReferenceSummary, finishDiagnosticTask, registerDiagnosticReferenceAssets, startDiagnosticTask, updateDiagnosticReferences, type DiagnosticMode, type DiagnosticReferenceAsset, type DiagnosticReferenceSummary } from "@/services/diagnostic-log";
 import { defaultConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { useUserStore } from "@/stores/use-user-store";
 import { collectImageStorageKeys, deleteStoredImages, resolveImageUrl, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -586,6 +587,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const imageTargets = nodesRef.current.filter((node) => isCanvasImageNodeType(node.type) && node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && node.metadata.imageTaskId);
             imageTargets.forEach((node) => {
                 if (pollingImageNodeIdsRef.current.has(node.id) || !node.metadata?.imageTaskId) return;
+                const imageConfig = buildGenerationConfig(effectiveConfig, node, "image");
+                if (imageConfig.channelMode !== "remote" || !useUserStore.getState().token) return;
                 pollingImageNodeIdsRef.current.add(node.id);
                 const diagnosticTaskId = node.metadata?.diagnosticTaskId;
                 void pollCanvasImageTaskStatus(node.metadata.imageTaskId)
