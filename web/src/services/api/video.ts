@@ -16,6 +16,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { appendDiagnosticEvent } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import { resolveAIHubReferenceUrl } from "@/services/api/aihub/media";
 
 export type VideoResponse = {
     id: string;
@@ -137,6 +138,11 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const systemPrompt = (config.systemPrompts.video || config.systemPrompt).trim();
     const createOptions = normalizeVideoTaskCreateOptions(options);
     const body = await createVideoRequestBody(config, model, systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt, normalizeVideoReferenceInput(references));
+    if (isAIHubConfig({ ...config, model, videoModel: model })) {
+        const input = normalizeVideoReferenceInput(references);
+        const count = input.references.length + input.videoReferences.length + input.audioReferences.length + (input.firstFrame ? 1 : 0) + (input.lastFrame ? 1 : 0);
+        if (count) appendDiagnosticEvent(createOptions.diagnosticTaskId, { stage: "reference", status: "success", title: "AIHub 参考素材传输方式已确认", data: { referenceSource: "aihub-temporary-media", referenceTransport: "aihub-temporary-url", count } });
+    }
     const requestSnapshot = createDiagnosticRequestSnapshot(body);
     const parameterCheck = compareVideoRequestParameters(config, model, requestSnapshot);
     appendDiagnosticEvent(createOptions.diagnosticTaskId, {
@@ -365,11 +371,11 @@ async function createVideoRequestBody(config: AiConfig, model: string, prompt: s
 }
 
 async function createAIHubVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>, size: string | null) {
-    const references = await Promise.all(input.references.map(imageReferenceToAIHubString));
-    const firstFrame = input.firstFrame ? await imageReferenceToAIHubString(input.firstFrame) : undefined;
-    const lastFrame = input.lastFrame ? await imageReferenceToAIHubString(input.lastFrame) : undefined;
-    const videoReferences = model.toLowerCase() === "veo-clean" ? await Promise.all(input.videoReferences.slice(0, 1).map(mediaReferenceToFile)) : await Promise.all(input.videoReferences.map(mediaReferenceToFormValue));
-    const audioReferences = await Promise.all(input.audioReferences.map(mediaReferenceToFormValue));
+    const references = await Promise.all(input.references.map((image) => imageReferenceToAIHubString(config, image)));
+    const firstFrame = input.firstFrame ? await imageReferenceToAIHubString(config, input.firstFrame) : undefined;
+    const lastFrame = input.lastFrame ? await imageReferenceToAIHubString(config, input.lastFrame) : undefined;
+    const videoReferences = await Promise.all(input.videoReferences.map((media) => resolveAIHubReferenceUrl(config, media)));
+    const audioReferences = await Promise.all(input.audioReferences.map((media) => resolveAIHubReferenceUrl(config, media)));
     return createAIHubVideoBody({
         model,
         prompt,
@@ -384,9 +390,8 @@ async function createAIHubVideoRequestBody(config: AiConfig, model: string, prom
     });
 }
 
-async function imageReferenceToAIHubString(image: ReferenceImage) {
-    const value = await imageReferenceToFormValue(image);
-    return typeof value === "string" ? value : imageToDataUrl(image);
+async function imageReferenceToAIHubString(config: AiConfig, image: ReferenceImage) {
+    return resolveAIHubReferenceUrl(config, image);
 }
 
 function isAPIMartKlingV26VideoConfig(config: AiConfig, model: string) {

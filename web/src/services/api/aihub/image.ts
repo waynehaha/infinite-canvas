@@ -22,6 +22,7 @@ export function createAIHubImageGenerationBody({ model, prompt, n, size, quality
     const safeReferences = references.slice(0, imageLimit);
     if (safeReferences.length) {
         if (isAIHubGeminiImageModel(model)) body.image = safeReferences.length === 1 ? safeReferences[0] : safeReferences;
+        else if (model.toLowerCase() === "gpt-image-2") body.image = safeReferences.length === 1 ? safeReferences[0] : safeReferences;
         else if (model.toLowerCase() === "gpt-image-2-1k") body.reference_image_urls = safeReferences;
     }
     return body;

@@ -3,7 +3,7 @@ import axios from "axios";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { isAIHubAsyncImageModel, isAIHubChatImageModel } from "@/lib/aihub-models";
 import { createDiagnosticRequestSnapshot } from "@/lib/diagnostic-log-safety";
-import { createAIHubChatImageBody, createAIHubImageEditForm, createAIHubImageGenerationBody, extractAIHubChatImageUrls } from "@/services/api/aihub/image";
+import { createAIHubChatImageBody, createAIHubImageGenerationBody, extractAIHubChatImageUrls } from "@/services/api/aihub/image";
 import { requestVideoGeneration } from "@/services/api/video";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
 import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
@@ -13,6 +13,7 @@ import { appendDiagnosticEvent } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
 import { nanoid } from "nanoid";
 import { assertChatRequestSafety } from "@/lib/chat-request-guard";
+import { resolveAIHubReferenceUrl } from "@/services/api/aihub/media";
 
 export type ChatCompletionMessage = {
     role: "system" | "user" | "assistant";
@@ -717,12 +718,12 @@ async function requestImageEditSingle(config: AiConfig, prompt: string, referenc
 }
 
 async function requestAIHubImageEditSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams, diagnosticTaskId?: string): Promise<GeneratedImage[]> {
-    const imageUrls = await Promise.all(references.map(imageToDataUrl));
+    const imageUrls = await Promise.all(references.map((image) => resolveAIHubReferenceUrl(config, image)));
+    appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "success", title: "AIHub 参考素材传输方式已确认", data: { referenceSource: "aihub-temporary-media", referenceTransport: "aihub-temporary-url", count: imageUrls.length } });
     const guardedPrompt = withPromptGuard(config, withSystemPrompt(config, prompt));
     const options = { model: config.model, prompt: guardedPrompt, n: params.n, size: params.size, quality: params.quality, references: imageUrls };
-    const gptImageEdit = config.model === "gpt-image-2";
-    const body = gptImageEdit ? createAIHubImageEditForm(options, await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })))) : createAIHubImageGenerationBody(options);
-    const endpoint = gptImageEdit ? "/images/edits" : "/images/generations";
+    const body = createAIHubImageGenerationBody(options);
+    const endpoint = "/images/edits";
     const requestBody: BodyInit = body instanceof FormData ? body : JSON.stringify(body);
 
     return requestAndParseImages(
@@ -734,7 +735,7 @@ async function requestAIHubImageEditSingle(config: AiConfig, prompt: string, ref
             withTimeout(params.timeoutSeconds, (signal) =>
                 fetch(aiApiUrl(config, endpoint), {
                     method: "POST",
-                    headers: aiHeaders(config, gptImageEdit ? undefined : "application/json"),
+                    headers: aiHeaders(config, "application/json"),
                     body: requestBody,
                     signal,
                 }),
@@ -748,7 +749,9 @@ async function requestAIHubImageEditSingle(config: AiConfig, prompt: string, ref
 }
 
 async function requestAIHubChatImageSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams, diagnosticTaskId?: string): Promise<GeneratedImage[]> {
-    const body = createAIHubChatImageBody(config.model, withPromptGuard(config, withSystemPrompt(config, prompt)), await Promise.all(references.map(imageToDataUrl)));
+    const imageUrls = await Promise.all(references.map((image) => resolveAIHubReferenceUrl(config, image)));
+    appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "success", title: "AIHub 参考素材传输方式已确认", data: { referenceSource: "aihub-temporary-media", referenceTransport: "aihub-temporary-url", count: imageUrls.length } });
+    const body = createAIHubChatImageBody(config.model, withPromptGuard(config, withSystemPrompt(config, prompt)), imageUrls);
     return requestAndParseImages(
         config,
         "/chat/completions",
@@ -857,7 +860,7 @@ async function requestAndParseImages(config: AiConfig, endpoint: string, request
 
 async function requestImages(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, references: ReferenceImage[], diagnosticTaskId?: string): Promise<GeneratedImage[]> {
     const params = createImageRequestParams(config);
-    const inputImageDataUrls = references.length ? await Promise.all(references.map((image) => imageToDataUrl(image))) : [];
+    const inputImageDataUrls = !isAIHubConfig(config) && references.length ? await Promise.all(references.map((image) => imageToDataUrl(image))) : [];
     const useConcurrentSingleRequests = config.apiMode === "responses" || config.codexCli || config.streamImages;
     if (params.n > 1 && useConcurrentSingleRequests) {
         const results = await Promise.allSettled(Array.from({ length: params.n }, () => requestImages({ ...config, count: "1" }, prompt, references, diagnosticTaskId)));
@@ -977,21 +980,9 @@ async function createCanvasImageTaskRequest(config: AiConfig & { seedIndex?: num
     const meta = { nodeId: options.nodeId || "", source: options.source || "canvas", sourceId: options.sourceId || "", clientTaskId: options.clientTaskId || "", prompt, channelId: taskChannelId };
     if (references.length && isAIHubConfig(config)) {
         const promptText = withPromptGuard(config, withSystemPrompt(config, prompt));
-        const imageUrls = await Promise.all(references.map(imageToDataUrl));
+        const imageUrls = await Promise.all(references.map((image) => resolveAIHubReferenceUrl(config, image)));
         const options = { model: config.model, prompt: promptText, n: params.n, size: params.size, quality: params.quality, references: imageUrls };
-        if (config.model === "gpt-image-2") {
-            const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-            const formData = createAIHubImageEditForm(options, files);
-            formData.set("_canvas_endpoint", "/images/edits");
-            formData.set("_canvas_source", meta.source);
-            formData.set("_canvas_node_id", meta.nodeId);
-            formData.set("_canvas_source_id", meta.sourceId);
-            formData.set("_canvas_task_id", meta.clientTaskId);
-            formData.set("_canvas_prompt", meta.prompt);
-            if (meta.channelId) formData.set("_canvas_channel_id", meta.channelId);
-            return { method: "POST", headers: tokenHeaders, body: formData };
-        }
-        return { method: "POST", headers: jsonHeaders, body: JSON.stringify({ endpoint: "/images/generations", ...meta, request: createAIHubImageGenerationBody(options) }) };
+        return { method: "POST", headers: jsonHeaders, body: JSON.stringify({ endpoint: "/images/edits", ...meta, request: createAIHubImageGenerationBody(options) }) };
     }
     if (references.length && isAgnesImageModel(config.model)) {
         const imageUrls = await Promise.all(
