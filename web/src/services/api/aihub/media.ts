@@ -8,7 +8,7 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
 type ReferenceMedia = ReferenceImage | ReferenceVideo | ReferenceAudio;
 type MediaUploadResponse = { success?: boolean; data?: { media_id: string; upload_url: string; upload_headers?: Record<string, string> } };
-type MediaCompleteResponse = { success?: boolean; data?: { content_url?: string } };
+type MediaCompleteResponse = { success?: boolean; message?: string; data?: { content_url?: string } };
 
 function apiUrl(config: AiConfig, path: string) {
     const token = useUserStore.getState().token;
@@ -73,7 +73,10 @@ export async function resolveAIHubReferenceUrl(config: AiConfig, reference: Refe
     if (!put.ok) throw new Error(`参考素材直传失败：${put.status}`);
     const completed = await fetch(apiUrl(config, `/media/${encodeURIComponent(initialized.data.media_id)}/complete`), { method: "POST", headers: authHeaders(config) });
     const result = await completed.json() as MediaCompleteResponse;
-    if (!completed.ok || !result.data?.content_url) throw new Error("AIHub 参考素材上传完成校验失败");
+    if (!completed.ok || !result.data?.content_url) {
+        const detail = typeof result.message === "string" && result.message.trim() ? result.message.trim() : "AIHub 参考素材上传完成校验失败";
+        throw new Error(`AIHub 参考素材上传完成失败：${detail}`);
+    }
     return result.data.content_url;
 }
 
