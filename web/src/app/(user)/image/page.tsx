@@ -541,9 +541,17 @@ export default function ImagePage() {
                     throw new Error("接口没有返回图片");
                 }
 
+                // Persist generated images before writing the history record. Without a
+                // storage key, serializeLog intentionally removes inline image data.
+                const stored = await uploadImage(image.dataUrl);
                 const durableImage = {
                     ...image,
-                    storageKey: "",
+                    dataUrl: stored.url,
+                    storageKey: stored.storageKey,
+                    width: stored.width,
+                    height: stored.height,
+                    bytes: stored.bytes,
+                    mimeType: stored.mimeType,
                 };
                 
                 // 更新结果状态
