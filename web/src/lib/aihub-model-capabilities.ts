@@ -44,11 +44,13 @@ export type AIHubMediaCapability = {
     localOnly?: boolean;
     required?: number;
     note?: string;
+    maxByResolution?: Readonly<Record<string, number>>;
 };
 
 export type AIHubFrameCapability = {
     mode: "pair";
     exclusive?: boolean;
+    exclusiveWith?: readonly ("images" | "videos" | "audios")[];
 };
 
 type AIHubCapabilityBase = {
@@ -61,6 +63,7 @@ type AIHubCapabilityBase = {
     hidden: readonly string[];
     /** Current upstream hint only; clients must not treat this as a hard validation rule. */
     promptLengthHint?: number;
+    promptMaxLength?: number;
 };
 
 export type AIHubImageCapability = AIHubCapabilityBase & {
@@ -95,7 +98,7 @@ export type AIHubAudioCapability = AIHubCapabilityBase & {
 export type AIHubModelCapability = AIHubImageCapability | AIHubVideoCapability | AIHubAudioCapability;
 
 export const AIHUB_CAPABILITY_SOURCE = "https://oq2vmod9er.feishu.cn/docx/KUyVd0qmdotG0Hx2v5SczraGnbc";
-export const AIHUB_CAPABILITY_VERIFIED_AT = "2026-07-31";
+export const AIHUB_CAPABILITY_VERIFIED_AT = "2026-08-12";
 
 const qualityOptions = [
     { value: "auto", label: "自动" },
@@ -160,6 +163,19 @@ const grokResolutions = [
     { value: "480p", label: "480p" },
     { value: "720p", label: "720p" },
 ] as const;
+
+const grok15Resolutions = [...grokResolutions, { value: "1080p", label: "1080p" }] as const;
+
+const h3Ratios = [
+    { value: "16:9", label: "横屏" },
+    { value: "1:1", label: "方形" },
+    { value: "9:16", label: "竖屏" },
+    { value: "21:9", label: "宽银幕" },
+    { value: "4:3", label: "标准横屏" },
+    { value: "3:4", label: "标准竖屏" },
+] as const;
+
+const h3AdaptiveRatios = [...h3Ratios, { value: "adaptive", label: "自适应", detail: "需提供参考素材" }] as const;
 
 const imageCountFour = { mode: "range", default: 1, min: 1, max: 4, step: 1, unit: "张", quick: [1, 2, 3, 4] } as const;
 const singleImage = { mode: "range", default: 1, min: 1, max: 1, step: 1, unit: "张" } as const;
@@ -246,6 +262,7 @@ const omniBase = {
 };
 
 const seedanceModels = ["Seedance-2.0-mini-480p", "Seedance-2.0-fast-480p", "Seedance-2.0-480p", "Seedance-2.0-mini-720p", "Seedance-2.0-fast-720p", "Seedance-2.0-720p"] as const;
+const h3Models = ["minimax-h3", "minimax-h3-768p", "minimax-h3-2k", "minimax-h3-pro-768p", "minimax-h3-pro-2k"] as const;
 
 const videoCapabilities: readonly AIHubVideoCapability[] = [
     ...(["omni-fast", "omni-fast-no-water"] as const).map((model) => ({
@@ -283,6 +300,32 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
         },
         requiresImageWith: ["videos", "audios"] as const,
     })),
+    ...h3Models.map((model) => {
+        const baseModel = model === "minimax-h3";
+        const proModel = model.includes("-pro-");
+        const resolution = baseModel ? "1440p" : model.endsWith("-2k") ? "2K" : "768p";
+        return {
+            kind: "video" as const,
+            model,
+            status: "documented" as const,
+            verifiedAt,
+            source,
+            endpoint: "/videos",
+            fixedSummary: [`固定 ${resolution}`, "原生音频"],
+            promptMaxLength: baseModel ? 2000 : 7000,
+            hidden: ["分辨率选择", "生成音频", "水印"],
+            aspectRatio: { mode: "select" as const, default: "16:9", options: baseModel ? h3Ratios : h3AdaptiveRatios },
+            duration: { mode: "range" as const, default: 5, min: baseModel ? 5 : 4, max: 15, step: 1, unit: "秒", quick: baseModel ? [5, 6, 8, 10, 12, 15] : [4, 5, 6, 8, 10, 12, 15] },
+            resolution: { mode: "fixed" as const, value: resolution, label: resolution },
+            references: {
+                images: { max: 5 },
+                ...(proModel ? { videos: { max: 1, minDurationMs: 2_000, maxDurationMs: 5_000, note: "单条 2–5 秒" } } : {}),
+                audios: { max: 3, maxTotalDurationMs: 15_000, note: "总时长不超过 15 秒，需同时提供参考图或首尾帧" },
+                frames: { mode: "pair" as const, exclusiveWith: ["images"] as const },
+            },
+            requiresImageWith: ["audios"] as const,
+        };
+    }),
     {
         kind: "video",
         model: "veo-clean",
@@ -296,9 +339,9 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
         hidden: ["清晰度", "尺寸", "宽高比", "时长", "生成音频", "水印", "参考图", "参考音频"],
         references: { videos: { max: 1, maxBytes: 20 * 1024 * 1024, required: 1, localOnly: true, note: "必须是本地视频文件" } },
     },
-    ...(["grok-imagine-video", "grok-imagine-video-1.5"] as const).map((model) => ({
+    {
         kind: "video" as const,
-        model,
+        model: "grok-imagine-video",
         status: "documented" as const,
         verifiedAt,
         source,
@@ -309,8 +352,23 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
         aspectRatio: { mode: "select" as const, default: "16:9", options: grokRatios },
         duration: { mode: "range" as const, default: 6, min: 1, max: 15, step: 1, unit: "秒", quick: [6, 10, 15] },
         resolution: { mode: "select" as const, default: "720p", options: grokResolutions },
-        references: { images: { max: 1, required: model.includes("1.5") ? 1 : undefined, maxBytes: 20 * 1024 * 1024 } },
-    })),
+        references: { images: { max: 1, maxBytes: 20 * 1024 * 1024 } },
+    },
+    {
+        kind: "video",
+        model: "grok-imagine-video-1.5",
+        status: "documented",
+        verifiedAt,
+        source,
+        endpoint: "/videos",
+        fixedSummary: ["按次计费", "480p / 720p 最多 7 张参考图", "1080p 仅支持 1 张参考图"],
+        promptLengthHint: 4096,
+        hidden: ["生成音频", "水印", "参考视频", "参考音频"],
+        aspectRatio: { mode: "select", default: "16:9", options: grokRatios },
+        duration: { mode: "range", default: 6, min: 1, max: 15, step: 1, unit: "秒", quick: [6, 10, 15] },
+        resolution: { mode: "select", default: "720p", options: grok15Resolutions },
+        references: { images: { max: 7, required: 1, maxBytes: 20 * 1024 * 1024, maxByResolution: { "1080p": 1 } } },
+    },
 ];
 
 const audioCapabilities: readonly AIHubAudioCapability[] = [
@@ -359,6 +417,12 @@ export function getAIHubImageCapability(model: string) {
 export function getAIHubVideoCapability(model: string) {
     const capability = getAIHubModelCapability(model);
     return capability?.kind === "video" ? capability : undefined;
+}
+
+export function getAIHubVideoImageLimit(model: string, resolution?: string) {
+    const images = getAIHubVideoCapability(model)?.references?.images;
+    if (!images) return 0;
+    return images.maxByResolution?.[resolution || ""] ?? images.max;
 }
 
 export function getAIHubAudioCapability(model: string) {

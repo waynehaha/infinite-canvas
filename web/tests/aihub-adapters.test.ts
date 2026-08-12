@@ -16,15 +16,16 @@ const { createAIHubImageEditForm, createAIHubImageGenerationBody } = await impor
 const { aiHubTaskContentId, aiHubTaskContentIds, aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } = await import("../src/services/api/aihub/video.ts");
 
 test("AIHub 默认模型完整且不重复", () => {
-    assert.equal(AIHUB_DEFAULT_MODELS.length, 30);
-    assert.equal(new Set(AIHUB_DEFAULT_MODELS).size, 30);
+    assert.equal(AIHUB_DEFAULT_MODELS.length, 35);
+    assert.equal(new Set(AIHUB_DEFAULT_MODELS).size, 35);
     assert.deepEqual(
         Object.fromEntries(Object.entries(AIHUB_MODELS_BY_CAPABILITY).map(([key, models]) => [key, models.length])),
-        { text: 9, image: 7, video: 13, audio: 1 },
+        { text: 9, image: 7, video: 18, audio: 1 },
     );
     assert.equal(aihubModelCapability("gemini-3.1-flash-lite"), "text");
     assert.equal(aihubModelCapability("gemini-3.1-flash-image-4k"), "image");
     assert.equal(aihubModelCapability("grok-imagine-video-1.5"), "video");
+    assert.equal(aihubModelCapability("minimax-h3-pro-2k"), "video");
 });
 
 test("Gemini Music 使用 Chat Completions 请求", () => {

@@ -22,6 +22,11 @@ export const AIHUB_MODELS_BY_CAPABILITY: Record<AIHubModelCapability, string[]> 
         "omni-fast-v2v-no-water",
         "grok-imagine-video",
         "grok-imagine-video-1.5",
+        "minimax-h3",
+        "minimax-h3-768p",
+        "minimax-h3-2k",
+        "minimax-h3-pro-768p",
+        "minimax-h3-pro-2k",
         "Seedance-2.0-mini-480p",
         "Seedance-2.0-fast-480p",
         "Seedance-2.0-480p",
@@ -43,7 +48,7 @@ export const AIHUB_DEFAULT_MODEL = {
 } satisfies Record<AIHubModelCapability, string>;
 
 const AIHUB_MODEL_CAPABILITIES = new Map(Object.entries(AIHUB_MODELS_BY_CAPABILITY).flatMap(([capability, models]) => models.map((model) => [model.toLowerCase(), capability as AIHubModelCapability] as const)));
-export type AIHubModelAdapter = "text-generic" | "image-generic" | "image-gpt" | "image-async" | "image-chat" | "image-gemini" | "video-generic" | "video-omni" | "video-seedance" | "video-grok" | "video-clean" | "audio-chat";
+export type AIHubModelAdapter = "text-generic" | "image-generic" | "image-gpt" | "image-async" | "image-chat" | "image-gemini" | "video-generic" | "video-omni" | "video-seedance" | "video-grok" | "video-h3" | "video-clean" | "audio-chat";
 
 const AIHUB_MODEL_ADAPTERS = new Map<string, AIHubModelAdapter>();
 for (const model of AIHUB_MODELS_BY_CAPABILITY.text) AIHUB_MODEL_ADAPTERS.set(model.toLowerCase(), "text-generic");
@@ -53,7 +58,7 @@ for (const model of AIHUB_MODELS_BY_CAPABILITY.image) {
 }
 for (const model of AIHUB_MODELS_BY_CAPABILITY.video) {
     const normalized = model.toLowerCase();
-    AIHUB_MODEL_ADAPTERS.set(normalized, normalized === "veo-clean" ? "video-clean" : normalized.startsWith("grok-imagine-video") ? "video-grok" : normalized.startsWith("seedance-") ? "video-seedance" : normalized.startsWith("omni-fast") ? "video-omni" : "video-generic");
+    AIHUB_MODEL_ADAPTERS.set(normalized, normalized === "veo-clean" ? "video-clean" : normalized.startsWith("grok-imagine-video") ? "video-grok" : normalized.startsWith("minimax-h3") ? "video-h3" : normalized.startsWith("seedance-") ? "video-seedance" : normalized.startsWith("omni-fast") ? "video-omni" : "video-generic");
 }
 for (const model of AIHUB_MODELS_BY_CAPABILITY.audio) AIHUB_MODEL_ADAPTERS.set(model.toLowerCase(), "audio-chat");
 

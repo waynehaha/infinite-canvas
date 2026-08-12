@@ -16,7 +16,7 @@ import { confirmVideoPromptLength } from "@/components/video-prompt-length-confi
 import { WorkbenchDiagnosticLogButton } from "@/components/layout/diagnostic-log-modal";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue, normalizeAIHubVideoAspectRatio } from "@/lib/aihub-model-capabilities";
+import { getAIHubVideoCapability, getAIHubVideoImageLimit, normalizeAIHubRangeValue, normalizeAIHubSelectValue, normalizeAIHubVideoAspectRatio } from "@/lib/aihub-model-capabilities";
 import { getAIHubVideoReferenceError, isAIHubVideoPromptRequired } from "@/lib/aihub-reference-policy";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
@@ -180,7 +180,7 @@ export default function VideoPage() {
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const aiHubCapability = getAIHubVideoCapability(model);
-    const aiHubImageLimit = aiHubCapability ? aiHubCapability.references?.images?.max || 0 : SEEDANCE_REFERENCE_LIMITS.images;
+    const aiHubImageLimit = aiHubCapability ? getAIHubVideoImageLimit(model, normalizeAIHubResolution(aiHubCapability, effectiveConfig.vquality)) : SEEDANCE_REFERENCE_LIMITS.images;
     const aiHubVideoLimit = aiHubCapability ? aiHubCapability.references?.videos?.max || 0 : SEEDANCE_REFERENCE_LIMITS.videos;
     const aiHubAudioLimit = aiHubCapability ? aiHubCapability.references?.audios?.max || 0 : SEEDANCE_REFERENCE_LIMITS.audios;
     const canGenerate = Boolean(prompt.trim()) || !isAIHubVideoPromptRequired(model);
@@ -671,7 +671,8 @@ export default function VideoPage() {
             }
         }
         const capability = getAIHubVideoCapability(modelValue);
-        const imageLimit = capability ? capability.references?.images?.max || 0 : kling ? 2 : referenceItems.length;
+        const resolution = normalizeAIHubResolution(capability, configValue.vquality);
+        const imageLimit = capability ? getAIHubVideoImageLimit(modelValue, resolution) : kling ? 2 : referenceItems.length;
         const videoLimit = capability ? capability.references?.videos?.max || 0 : kling ? 0 : videoReferenceItems.length;
         const audioLimit = capability ? capability.references?.audios?.max || 0 : kling ? 0 : audioReferenceItems.length;
         if (capability?.references?.videos?.required && videoReferenceItems.length < capability.references.videos.required) {
@@ -682,7 +683,11 @@ export default function VideoPage() {
             message.error(`当前模型需要至少 ${capability.references.images.required} 张参考图`);
             return null;
         }
-        const capabilityReferenceError = getAIHubVideoReferenceError(modelValue, { images: referenceItems, videos: videoReferenceItems, audios: audioReferenceItems, firstFrame: firstFrameItem, lastFrame: lastFrameItem });
+        if (capability?.promptMaxLength && Array.from(text).length > capability.promptMaxLength) {
+            message.error(`当前模型提示词最多支持 ${capability.promptMaxLength} 个字符`);
+            return null;
+        }
+        const capabilityReferenceError = getAIHubVideoReferenceError(modelValue, { images: referenceItems, videos: videoReferenceItems, audios: audioReferenceItems, firstFrame: firstFrameItem, lastFrame: lastFrameItem, resolution, aspectRatio: configValue.size });
         if (capabilityReferenceError) {
             message.error(capabilityReferenceError);
             return null;
@@ -1539,7 +1544,7 @@ function WorkbenchPanel({
                                     {aiHubCapability.aspectRatio ? <QuickSelect label={model.startsWith("grok-") ? "尺寸" : "画幅"} value={normalizeAIHubSelectValue(aiHubCapability.aspectRatio, config.size)} options={[...aiHubCapability.aspectRatio.options]} onChange={(value) => updateConfig("size", value)} /> : null}
                                     {aiHubCapability.duration?.mode === "select" ? <QuickSelect label="秒数" value={normalizeAIHubSelectValue(aiHubCapability.duration, config.videoSeconds)} options={[...aiHubCapability.duration.options]} onChange={(value) => updateConfig("videoSeconds", value)} /> : null}
                                     {aiHubCapability.duration?.mode === "range" ? <QuickNumber label="秒数" value={String(normalizeAIHubRangeValue(aiHubCapability.duration, config.videoSeconds))} min={aiHubCapability.duration.min} max={aiHubCapability.duration.max} onChange={(value) => updateConfig("videoSeconds", value)} /> : null}
-                                    <QuickInfo label="输出" value={[aiHubCapability.resolution?.label, aiHubCapability.duration?.mode === "fixed" ? aiHubCapability.duration.label : ""].filter(Boolean).join(" · ") || "由模型决定"} />
+                                    {aiHubCapability.resolution?.mode === "select" ? <QuickSelect label="清晰度" value={normalizeAIHubSelectValue(aiHubCapability.resolution, config.vquality)} options={[...aiHubCapability.resolution.options]} onChange={(value) => updateConfig("vquality", value)} /> : <QuickInfo label="输出" value={[aiHubCapability.resolution?.label, aiHubCapability.duration?.mode === "fixed" ? aiHubCapability.duration.label : ""].filter(Boolean).join(" · ") || "由模型决定"} />}
                                 </>
                             ) : (
                                 <>
@@ -1607,7 +1612,7 @@ function WorkbenchPanel({
                             <Button size="small" icon={<Upload className="size-3.5" />} onClick={onUploadReferences}>上传</Button>
                             <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => onOpenAssetPicker("image")}>从素材库选择</Button>
                         </div>
-                        <ReferenceImageStrip references={references} limit={aiHubCapability?.references?.images?.max} onRemoveReference={onRemoveReference} onMoveReference={onMoveReference} />
+                        <ReferenceImageStrip references={references} limit={aiHubCapability ? getAIHubVideoImageLimit(model, normalizeAIHubResolution(aiHubCapability, config.vquality)) : undefined} onRemoveReference={onRemoveReference} onMoveReference={onMoveReference} />
                     </div>
                 </WorkbenchSection> : null}
                 {videoReferencesEnabled ? <WorkbenchSection title="参考视频" count={videoReferences.length}>
@@ -3117,6 +3122,11 @@ function normalizeVideoSize(value: string) {
 
 function normalizeResolution(value: string) {
     return normalizeVideoResolutionValue(value);
+}
+
+function normalizeAIHubResolution(capability: ReturnType<typeof getAIHubVideoCapability>, value: string) {
+    if (!capability?.resolution) return value;
+    return capability.resolution.mode === "select" ? normalizeAIHubSelectValue(capability.resolution, /p$/i.test(value) ? value : `${value}p`) : String(capability.resolution.value);
 }
 
 function normalizeVideoCount(value: string | number) {

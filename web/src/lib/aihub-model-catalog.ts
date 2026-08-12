@@ -23,7 +23,7 @@ export type AIHubModelCatalog = {
 const adaptersByKind: Record<AIHubModelCapability, AIHubModelAdapter[]> = {
     text: ["text-generic"],
     image: ["image-generic", "image-gpt", "image-async", "image-chat", "image-gemini"],
-    video: ["video-generic", "video-omni", "video-seedance", "video-grok", "video-clean"],
+    video: ["video-generic", "video-omni", "video-seedance", "video-grok", "video-h3", "video-clean"],
     audio: ["audio-chat"],
 };
 
@@ -119,6 +119,7 @@ function validateCapability(value: Record<string, unknown>, model: string, kind:
     if (!/^https:\/\//i.test(value.source) || !value.endpoint.startsWith("/")) throw new Error(`模型 ${model} 的来源或接口地址无效`);
     if (!isStringArray(value.fixedSummary) || !isStringArray(value.hidden)) throw new Error(`模型 ${model} 的说明字段无效`);
     if (value.promptLengthHint !== undefined && (typeof value.promptLengthHint !== "number" || !Number.isInteger(value.promptLengthHint) || value.promptLengthHint <= 0)) throw new Error(`模型 ${model} 的提示词长度参考值无效`);
+    if (value.promptMaxLength !== undefined && (typeof value.promptMaxLength !== "number" || !Number.isInteger(value.promptMaxLength) || value.promptMaxLength <= 0)) throw new Error(`模型 ${model} 的提示词长度上限无效`);
     for (const key of ["quality", "size", "aspectRatio", "duration", "resolution", "count"]) if (value[key] !== undefined) validateControl(value[key], model, key);
     if (value.references !== undefined) validateReferences(value.references, model);
     return value as AIHubCapability;

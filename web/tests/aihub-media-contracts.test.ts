@@ -10,7 +10,7 @@ registerHooks({
 });
 
 const { AIHUB_DEFAULT_MODELS, aihubModelCapability } = await import("../src/lib/aihub-models.ts");
-const { AIHUB_MODEL_CAPABILITIES, getAIHubModelCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue } = await import("../src/lib/aihub-model-capabilities.ts");
+const { AIHUB_MODEL_CAPABILITIES, getAIHubModelCapability, getAIHubVideoImageLimit, normalizeAIHubRangeValue, normalizeAIHubSelectValue } = await import("../src/lib/aihub-model-capabilities.ts");
 const { createAIHubChatImageBody, createAIHubImageGenerationBody, extractAIHubChatImageUrls } = await import("../src/services/api/aihub/image.ts");
 const { createAIHubVideoBody } = await import("../src/services/api/aihub/video.ts");
 const { getAIHubImageReferenceError, getAIHubVideoReferenceError, isAIHubVideoPromptRequired } = await import("../src/lib/aihub-reference-policy.ts");
@@ -80,6 +80,56 @@ test("Grok 图生视频使用单图 image 字段并兼容 1.5 旧模型名", () 
             image: "https://cdn.example.com/ref.png",
         },
     );
+});
+
+test("Grok 1.5 多图使用 reference_images，1080p 只允许单图", () => {
+    const references = ["https://cdn.example.com/1.png", "https://cdn.example.com/2.png"];
+    assert.deepEqual(createAIHubVideoBody(videoInput({ model: "grok-imagine-video-1.5", references })), {
+        model: "grok-imagine-video-1.5",
+        prompt: "生成视频",
+        seconds: "6",
+        aspect_ratio: "16:9",
+        resolution: "720p",
+        reference_images: references,
+    });
+    assert.equal(getAIHubVideoImageLimit("grok-imagine-video-1.5", "720p"), 7);
+    assert.equal(getAIHubVideoImageLimit("grok-imagine-video-1.5", "1080p"), 1);
+    assert.throws(() => createAIHubVideoBody(videoInput({ model: "grok-imagine-video-1.5", references, resolution: "1080p" })), /最多支持 1 张参考图/);
+});
+
+test("MiniMax H3 使用 AIHub 原生 JSON 字段和模型边界", () => {
+    assert.deepEqual(
+        createAIHubVideoBody(videoInput({ model: "minimax-h3-pro-2k", seconds: "99", aspectRatio: "adaptive", references: ["https://cdn.example.com/image.png"], videoReferences: ["https://cdn.example.com/video.mp4"], audioReferences: ["https://cdn.example.com/audio.mp3"] })),
+        {
+            model: "minimax-h3-pro-2k",
+            prompt: "生成视频",
+            duration: 15,
+            ratio: "adaptive",
+            referenceImages: ["https://cdn.example.com/image.png"],
+            referenceAudios: ["https://cdn.example.com/audio.mp3"],
+            referenceVideos: ["https://cdn.example.com/video.mp4"],
+        },
+    );
+    assert.throws(() => createAIHubVideoBody(videoInput({ model: "minimax-h3-2k", aspectRatio: "adaptive" })), /文生视频不支持自适应比例/);
+    assert.throws(() => createAIHubVideoBody(videoInput({ model: "minimax-h3", prompt: "A".repeat(2001) })), /最多支持 2000 个字符/);
+    assert.throws(() => createAIHubVideoBody(videoInput({ model: "minimax-h3", audioReferences: ["https://cdn.example.com/audio.mp3"] })), /需要至少一张参考图或一组首尾帧/);
+});
+
+test("MiniMax H3 首尾帧使用成对字段且可搭配音频和 Pro 参考视频", () => {
+    assert.deepEqual(
+        createAIHubVideoBody(videoInput({ model: "minimax-h3-pro-768p", firstFrame: "https://cdn.example.com/first.png", lastFrame: "https://cdn.example.com/last.png", videoReferences: ["https://cdn.example.com/video.mp4"], audioReferences: ["https://cdn.example.com/audio.mp3"] })),
+        {
+            model: "minimax-h3-pro-768p",
+            prompt: "生成视频",
+            duration: 6,
+            ratio: "16:9",
+            referenceAudios: ["https://cdn.example.com/audio.mp3"],
+            referenceVideos: ["https://cdn.example.com/video.mp4"],
+            first_image: "https://cdn.example.com/first.png",
+            last_image: "https://cdn.example.com/last.png",
+        },
+    );
+    assert.throws(() => createAIHubVideoBody(videoInput({ model: "minimax-h3", firstFrame: "https://cdn.example.com/first.png" })), /必须同时提供/);
 });
 
 test("无效枚举和越界数值会回落到能力库允许范围", () => {

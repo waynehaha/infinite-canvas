@@ -20,6 +20,8 @@ export type CanvasVideoReferencePolicy = {
 export type CanvasFrameSelection = {
     firstFrameNodeId?: string;
     lastFrameNodeId?: string;
+    resolution?: string;
+    aspectRatio?: string;
 };
 
 const referencePattern = /@\[node:([^\]]+)\]/g;
@@ -42,6 +44,8 @@ export function buildCanvasVideoReferencePolicy(model: string, inputs: NodeGener
         audios: referenceInputs.flatMap((input) => input.audio ? [input.audio] : []),
         firstFrame: frames.firstFrameNodeId ? inputById.get(frames.firstFrameNodeId)?.image : null,
         lastFrame: frames.lastFrameNodeId ? inputById.get(frames.lastFrameNodeId)?.image : null,
+        resolution: frames.resolution,
+        aspectRatio: frames.aspectRatio,
     });
 
     return { activeInputs, connectedSummary, unsupportedConnectedTypes, error };

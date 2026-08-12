@@ -34,7 +34,14 @@ test("旧 AIHub 默认列表会升级且保留用户 Key", () => {
 });
 
 test("上一版 28 个 AIHub 默认模型会补入 Grok 视频模型", () => {
-    const previousModels = AIHUB_DEFAULT_MODELS.filter((model) => !["grok-imagine-video", "grok-imagine-video-1.5"].includes(model));
+    const previousModels = AIHUB_DEFAULT_MODELS.filter((model) => !model.startsWith("minimax-h3") && !["grok-imagine-video", "grok-imagine-video-1.5"].includes(model));
+    assert.equal(previousModels.length, 28);
+    const [channel] = normalizeLocalChannels({ localChannels: [{ id: "aihub", name: "AIHub", baseUrl: AIHUB_BASE_URL, apiKey: "", models: previousModels }] });
+    assert.deepEqual(channel.models, AIHUB_DEFAULT_MODELS);
+});
+
+test("上一版 30 个 AIHub 默认模型会补入 MiniMax H3", () => {
+    const previousModels = AIHUB_DEFAULT_MODELS.filter((model) => !model.startsWith("minimax-h3"));
     const [channel] = normalizeLocalChannels({ localChannels: [{ id: "aihub", name: "AIHub", baseUrl: AIHUB_BASE_URL, apiKey: "", models: previousModels }] });
     assert.deepEqual(channel.models, AIHUB_DEFAULT_MODELS);
 });

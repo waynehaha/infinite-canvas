@@ -6,7 +6,7 @@ import { Input, Switch } from "antd";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, isSeedanceFastOrMiniModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue, type AIHubVideoCapability } from "@/lib/aihub-model-capabilities";
+import { getAIHubVideoCapability, getAIHubVideoImageLimit, normalizeAIHubRangeValue, normalizeAIHubSelectValue, type AIHubVideoCapability } from "@/lib/aihub-model-capabilities";
 import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
 import { channelIdForActiveModel, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
 
@@ -157,6 +157,7 @@ function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, sh
     const ratio = capability.aspectRatio ? normalizeAIHubSelectValue(capability.aspectRatio, config.size) : "";
     const duration = capability.duration?.mode === "select" ? normalizeAIHubSelectValue(capability.duration, config.videoSeconds) : capability.duration?.mode === "range" ? normalizeAIHubRangeValue(capability.duration, config.videoSeconds) : capability.duration?.value;
     const resolution = capability.resolution?.mode === "select" ? normalizeAIHubSelectValue(capability.resolution, config.vquality) : capability.resolution?.value;
+    const imageLimit = getAIHubVideoImageLimit(capability.model, String(resolution || ""));
 
     useEffect(() => {
         if (capability.aspectRatio) {
@@ -181,9 +182,9 @@ function AIHubVideoSettingsPanel({ capability, config, onConfigChange, theme, sh
 
     const referenceSummary = [
         capability.references?.images && !hidden.has("参考图")
-            ? capability.references.images.required === capability.references.images.max
-                ? `需要 ${capability.references.images.max} 张参考图`
-                : `参考图最多 ${capability.references.images.max} 张`
+            ? capability.references.images.required === imageLimit
+                ? `需要 ${imageLimit} 张参考图`
+                : `参考图最多 ${imageLimit} 张`
             : "",
         capability.references?.videos && !hidden.has("参考视频")
             ? capability.references.videos.required === capability.references.videos.max

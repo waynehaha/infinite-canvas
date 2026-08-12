@@ -37,7 +37,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputs, videoFrameOptio
     const mode = node.metadata?.generationMode || "image";
     const config = buildNodeConfig(globalConfig, node, mode);
     const referencePolicy = mode === "video"
-        ? buildCanvasVideoReferencePolicy(config.model, inputs, node.metadata?.composerContent ?? "", { firstFrameNodeId: node.metadata?.firstFrameNodeId, lastFrameNodeId: node.metadata?.lastFrameNodeId })
+        ? buildCanvasVideoReferencePolicy(config.model, inputs, node.metadata?.composerContent ?? "", { firstFrameNodeId: node.metadata?.firstFrameNodeId, lastFrameNodeId: node.metadata?.lastFrameNodeId, resolution: normalizeCapabilityResolution(config.vquality), aspectRatio: config.size })
         : mode === "image"
           ? buildCanvasImageReferencePolicy(config.model, inputs, node.metadata?.composerContent ?? "")
           : null;
@@ -157,6 +157,11 @@ export function CanvasConfigNodePanel({ node, isRunning, inputs, videoFrameOptio
             </Button>
         </div>
     );
+}
+
+function normalizeCapabilityResolution(value: string) {
+    const normalized = String(value || "").trim();
+    return /p$/i.test(normalized) || /k$/i.test(normalized) ? normalized : `${normalized || "720"}p`;
 }
 
 function InputChip({ label, value, style, unsupported = false }: { label: string; value: string; style: CSSProperties; unsupported?: boolean }) {

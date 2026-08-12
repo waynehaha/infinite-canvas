@@ -67,3 +67,11 @@ test("画布 Seedance 首尾帧必须成对且不能混用普通素材", () => {
     const withOther = buildCanvasVideoReferencePolicy("Seedance-2.0-720p", [image, { ...image, nodeId: "image-2" }, { ...image, nodeId: "image-3" }], "", { firstFrameNodeId: "image", lastFrameNodeId: "image-2" });
     assert.match(withOther.error, /不能同时添加其他参考素材/);
 });
+
+test("画布按清晰度限制 Grok 1.5 参考图，并校验 H3 自适应比例", () => {
+    const images = [image, { ...image, nodeId: "image-2" }];
+    assert.equal(buildCanvasVideoReferencePolicy("grok-imagine-video-1.5", images, "", { resolution: "720p" }).error, "");
+    assert.match(buildCanvasVideoReferencePolicy("grok-imagine-video-1.5", images, "", { resolution: "1080p" }).error, /最多支持 1 个/);
+    assert.match(buildCanvasVideoReferencePolicy("minimax-h3-2k", [], "提示词", { aspectRatio: "adaptive" }).error, /文生视频不支持自适应比例/);
+    assert.equal(buildCanvasVideoReferencePolicy("minimax-h3-2k", [image], "", { aspectRatio: "adaptive" }).error, "");
+});

@@ -83,6 +83,7 @@ function renderDocument(capabilities, sourceUrl, verifiedAt) {
 function adjustableText(item) {
     const values = [];
     if (item.promptLengthHint) values.push(`提示词参考上限：约 ${item.promptLengthHint} 字符（仅提醒，不拦截）`);
+    if (item.promptMaxLength) values.push(`提示词上限：${item.promptMaxLength} 字符`);
     if (item.quality) values.push(`质量：${optionText(item.quality)}`);
     if (item.size) values.push(`画幅：${optionText(item.size)}`);
     if (item.aspectRatio) values.push(`${item.model.startsWith("grok-") ? "尺寸" : "比例"}：${optionText(item.aspectRatio)}`);
@@ -112,11 +113,15 @@ function referenceText(item) {
         if (limit.maxLongEdge) details.push(`长边 ≤${limit.maxLongEdge}px`);
         if (limit.minDurationMs || limit.maxDurationMs) details.push(`单条 ${limit.minDurationMs ? limit.minDurationMs / 1000 : 0}–${limit.maxDurationMs ? limit.maxDurationMs / 1000 : "—"} 秒`);
         if (limit.maxTotalDurationMs) details.push(`总时长 ≤${limit.maxTotalDurationMs / 1000} 秒`);
+        if (limit.maxByResolution) details.push(Object.entries(limit.maxByResolution).map(([resolution, max]) => `${resolution} 最多 ${max} 个`).join("，"));
         if (limit.localOnly) details.push("仅限本地上传");
         if (limit.note) details.push(limit.note);
         values.push(`${label}${required}${limit.max}${details.length ? `，${details.join("，")}` : ""}`);
     }
-    if (item.references.frames?.mode === "pair") values.push(`首尾帧必须成对${item.references.frames.exclusive ? "，且不能混用其他参考素材" : ""}`);
+    if (item.references.frames?.mode === "pair") {
+        const exclusiveLabels = item.references.frames.exclusiveWith?.map((kind) => ({ images: "普通参考图", videos: "参考视频", audios: "参考音频" })[kind]).join("、");
+        values.push(`首尾帧必须成对${item.references.frames.exclusive ? "，且不能混用其他参考素材" : exclusiveLabels ? `，不能混用${exclusiveLabels}` : ""}`);
+    }
     return values.length ? values.join("<br>") : "—";
 }
 

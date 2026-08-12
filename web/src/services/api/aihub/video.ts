@@ -1,5 +1,5 @@
 import { aihubModelAdapter, isAIHubOmniModel, isAIHubSeedanceModel } from "@/lib/aihub-models";
-import { getAIHubImageCapability, getAIHubVideoCapability, normalizeAIHubRangeValue, normalizeAIHubSelectValue, normalizeAIHubVideoAspectRatio } from "@/lib/aihub-model-capabilities";
+import { getAIHubImageCapability, getAIHubVideoCapability, getAIHubVideoImageLimit, normalizeAIHubRangeValue, normalizeAIHubSelectValue, normalizeAIHubVideoAspectRatio } from "@/lib/aihub-model-capabilities";
 
 export type AIHubMediaValue = string | File;
 
@@ -31,17 +31,44 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
               : capability?.duration?.mode === "select"
                 ? normalizeAIHubSelectValue(capability.duration, input.seconds)
                 : input.seconds;
+    if (capability?.promptMaxLength && Array.from(input.prompt).length > capability.promptMaxLength) {
+        throw new Error(`${capability.model} 提示词最多支持 ${capability.promptMaxLength} 个字符`);
+    }
     if (adapter === "video-grok") {
-        const references = input.references.slice(0, capability?.references?.images?.max || 1);
-        if (normalizedModel === "grok-imagine-video-1.5" && !references.length) throw new Error("Grok Imagine 1.5 需要至少一张参考图");
         const resolution = capability?.resolution?.mode === "select" ? normalizeAIHubSelectValue(capability.resolution, input.resolution) : String(capability?.resolution?.value || input.resolution);
+        const imageLimit = getAIHubVideoImageLimit(normalizedModel, resolution) || 1;
+        if (input.references.length > imageLimit) throw new Error(`${capability?.model || normalizedModel} 当前清晰度最多支持 ${imageLimit} 张参考图`);
+        const references = input.references.slice(0, imageLimit);
+        if (normalizedModel === "grok-imagine-video-1.5" && !references.length) throw new Error("Grok Imagine 1.5 需要至少一张参考图");
         return {
             model: normalizedModel,
             prompt: input.prompt,
             seconds,
             aspect_ratio: aspectRatio,
             resolution,
-            ...(references[0] ? { image: references[0] } : {}),
+            ...(references.length === 1 ? { image: references[0] } : references.length > 1 ? { reference_images: references } : {}),
+        };
+    }
+
+    if (adapter === "video-h3") {
+        const hasFrames = Boolean(input.firstFrame || input.lastFrame);
+        if (hasFrames && (!input.firstFrame || !input.lastFrame)) throw new Error("MiniMax H3 首尾帧必须同时提供");
+        if (hasFrames && input.references.length) throw new Error("MiniMax H3 首尾帧模式不能同时添加普通参考图");
+        if (input.references.length > (capability?.references?.images?.max || 0)) throw new Error(`参考图最多支持 ${capability?.references?.images?.max || 0} 个`);
+        if (input.audioReferences.length > (capability?.references?.audios?.max || 0)) throw new Error(`参考音频最多支持 ${capability?.references?.audios?.max || 0} 个`);
+        if (input.videoReferences.length > (capability?.references?.videos?.max || 0)) throw new Error(`参考视频最多支持 ${capability?.references?.videos?.max || 0} 个`);
+        if (input.audioReferences.length && !input.references.length && !hasFrames) throw new Error("MiniMax H3 使用参考音频时需要至少一张参考图或一组首尾帧");
+        if (aspectRatio === "adaptive" && !input.references.length && !input.videoReferences.length && !hasFrames) throw new Error("MiniMax H3 文生视频不支持自适应比例");
+        return {
+            model: input.model,
+            prompt: input.prompt,
+            duration: Number(seconds),
+            ratio: aspectRatio,
+            ...(input.references.length ? { referenceImages: input.references } : {}),
+            ...(input.audioReferences.length ? { referenceAudios: input.audioReferences } : {}),
+            ...(input.videoReferences.length ? { referenceVideos: input.videoReferences } : {}),
+            ...(input.firstFrame ? { first_image: input.firstFrame } : {}),
+            ...(input.lastFrame ? { last_image: input.lastFrame } : {}),
         };
     }
 

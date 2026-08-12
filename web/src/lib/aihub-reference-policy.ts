@@ -1,4 +1,4 @@
-import { getAIHubImageCapability, getAIHubVideoCapability, type AIHubMediaCapability } from "@/lib/aihub-model-capabilities";
+import { getAIHubImageCapability, getAIHubVideoCapability, getAIHubVideoImageLimit, type AIHubMediaCapability } from "@/lib/aihub-model-capabilities";
 
 export type AIHubReferenceLike = {
     bytes?: number;
@@ -16,6 +16,8 @@ export type AIHubVideoReferenceSelection = {
     audios: AIHubReferenceLike[];
     firstFrame?: AIHubReferenceLike | null;
     lastFrame?: AIHubReferenceLike | null;
+    resolution?: string;
+    aspectRatio?: string;
 };
 
 export function getAIHubImageReferenceError(model: string, references: AIHubReferenceLike[]) {
@@ -28,7 +30,7 @@ export function getAIHubVideoReferenceError(model: string, selection: AIHubVideo
     if (!capability) return "";
 
     const errors = [
-        mediaError(capability.model, "参考图", selection.images, capability.references?.images),
+        mediaError(capability.model, "参考图", selection.images, capability.references?.images, getAIHubVideoImageLimit(model, selection.resolution)),
         mediaError(capability.model, "参考视频", selection.videos, capability.references?.videos),
         mediaError(capability.model, "参考音频", selection.audios, capability.references?.audios),
     ].filter(Boolean);
@@ -42,8 +44,14 @@ export function getAIHubVideoReferenceError(model: string, selection: AIHubVideo
     if (frameCapability?.exclusive && hasFirstFrame && hasLastFrame && (selection.images.length || selection.videos.length || selection.audios.length)) {
         errors.push("首尾帧模式不能同时添加其他参考素材");
     }
+    if (frameCapability?.exclusiveWith?.some((kind) => selection[kind].length) && hasFirstFrame && hasLastFrame) {
+        errors.push(`首尾帧模式不能同时添加${frameCapability.exclusiveWith.includes("images") ? "普通参考图" : "其他参考素材"}`);
+    }
     if (capability.requiresImageWith?.some((kind) => selection[kind].length) && !selection.images.length && !hasAnyFrame) {
         errors.push(`${capability.model} 使用视频或音频参考时需要至少 1 张主图`);
+    }
+    if (selection.aspectRatio === "adaptive" && !selection.images.length && !selection.videos.length && !hasAnyFrame) {
+        errors.push(`${capability.model} 文生视频不支持自适应比例，请选择明确画幅或添加参考素材`);
     }
 
     return errors.join("；");
@@ -53,11 +61,11 @@ export function isAIHubVideoPromptRequired(model: string) {
     return getAIHubVideoCapability(model)?.promptRequired !== false;
 }
 
-function mediaError(model: string, label: string, values: AIHubReferenceLike[], limit: AIHubMediaCapability | undefined) {
+function mediaError(model: string, label: string, values: AIHubReferenceLike[], limit: AIHubMediaCapability | undefined, maximum = limit?.max) {
     if (!limit) return values.length ? `${model} 不支持${label}` : "";
     const minimum = limit.required ?? limit.min ?? 0;
     if (values.length < minimum) return `${model} 需要至少 ${minimum} 个${label}`;
-    if (values.length > limit.max) return `${label}最多支持 ${limit.max} 个`;
+    if (maximum !== undefined && values.length > maximum) return maximum === limit.max ? `${label}最多支持 ${maximum} 个` : `${model} 当前配置的${label}最多支持 ${maximum} 个`;
 
     const bytes = values.map(referenceBytes).filter((value): value is number => typeof value === "number");
     if (limit.maxBytes && bytes.some((value) => value > limit.maxBytes!)) return `${label}单个不能超过 ${formatMB(limit.maxBytes)}`;
