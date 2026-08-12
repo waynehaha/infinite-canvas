@@ -161,6 +161,19 @@ jobs:
           go build -trimpath -ldflags "-s -w" -o dist/native/bin/launcher ./cmd/desktop-launcher
           node scripts/native/assemble-bundle.mjs --target macos --output dist/native/macos-bundle --server dist/native/bin/server --launcher dist/native/bin/launcher --node "$(command -v node)"
 
+      - name: Reject legacy Docker launcher regression
+        run: |
+          legacy_bundle="$RUNNER_TEMP/legacy-docker-bundle"
+          legacy_output="$RUNNER_TEMP/legacy-docker-output"
+          cp -R dist/native/macos-bundle "$legacy_bundle"
+          printf '#!/bin/zsh\nopen -a Docker\ndocker compose stop\n' > "$legacy_bundle/launcher"
+          chmod +x "$legacy_bundle/launcher"
+          if packaging/macos/build-dmg.sh "$legacy_bundle" "$legacy_output" "test" >"$RUNNER_TEMP/legacy-docker-test.log" 2>&1; then
+            echo "Legacy Docker launcher was accepted unexpectedly"
+            exit 1
+          fi
+          grep -q "不是原生可执行程序" "$RUNNER_TEMP/legacy-docker-test.log"
+
       - name: Smoke test native bundle
         run: |
           bundle="$PWD/dist/native/macos-bundle"
@@ -197,6 +210,11 @@ jobs:
           hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/ai-workbench-dmg" dist/native/*macOS-Apple-Silicon.dmg
           test -x "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench"
           test -x "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/MacOS/stop-launcher"
+          file "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench" | grep -Eq 'Mach-O .* executable'
+          file "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/MacOS/stop-launcher" | grep -Eq 'Mach-O .* executable'
+          ! strings "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/MacOS/stop-launcher" | grep -Eiq 'docker compose|Docker Desktop|docker-compose|open -a Docker'
+          test ! -e "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/docker-compose.desktop.yml"
+          test ! -e "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/data"
           codesign --verify --deep --strict "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app"
           codesign --verify --deep --strict "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app"
           installed_data="$RUNNER_TEMP/ai-workbench-installed-data"
@@ -204,6 +222,7 @@ jobs:
           installed_web_port="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["webPort"])' "$installed_data/run/state.json")"
           curl -fsS -o /dev/null "http://127.0.0.1:$installed_web_port/"
           INFINITE_CANVAS_DATA_DIR="$installed_data" "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/MacOS/stop-launcher" --no-dialog
+          test ! -e "$installed_data/run/state.json"
           hdiutil detach "$RUNNER_TEMP/ai-workbench-dmg"
 
       - uses: actions/upload-artifact@v4

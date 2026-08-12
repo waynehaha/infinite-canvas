@@ -16,6 +16,22 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/app" "$STOP_APP/Contents
 cp -R "$BUNDLE_DIR"/. "$APP/Contents/Resources/app/"
 mv "$APP/Contents/Resources/app/launcher" "$APP/Contents/MacOS/ai-creative-workbench"
 cp "$APP/Contents/MacOS/ai-creative-workbench" "$STOP_APP/Contents/MacOS/stop-launcher"
+
+verify_native_launcher() {
+    local launcher="$1"
+    if ! file "$launcher" | grep -Eq 'Mach-O .* executable'; then
+        echo "错误：macOS 包入口不是原生可执行程序：$launcher" >&2
+        exit 1
+    fi
+    if strings "$launcher" | grep -Eiq 'docker compose|Docker Desktop|docker-compose|open -a Docker'; then
+        echo "错误：原生 macOS 包混入了 Docker 启动器：$launcher" >&2
+        exit 1
+    fi
+}
+
+verify_native_launcher "$APP/Contents/MacOS/ai-creative-workbench"
+verify_native_launcher "$STOP_APP/Contents/MacOS/stop-launcher"
+
 sed "s/__APP_VERSION__/$VERSION/g" "$ROOT_DIR/packaging/macos/App-Info.plist" > "$APP/Contents/Info.plist"
 sed "s/__APP_VERSION__/$VERSION/g" "$ROOT_DIR/packaging/macos/Stop-Info.plist" > "$STOP_APP/Contents/Info.plist"
 chmod +x "$APP/Contents/MacOS/ai-creative-workbench" "$STOP_APP/Contents/MacOS/stop-launcher"
