@@ -26,8 +26,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 Compression=lzma2/ultra64
 SolidCompression=yes
-SetupIconFile={#SourceDir}\app.ico
-UninstallDisplayIcon={app}\app.ico
+SetupIconFile={#SourceDir}\open.ico
+UninstallDisplayIcon={app}\open.ico
 OutputDir={#OutputDir}
 OutputBaseFilename=Infinite-Canvas-v{#AppVersion}-Windows-x64-Setup
 
@@ -35,9 +35,9 @@ OutputBaseFilename=Infinite-Canvas-v{#AppVersion}-Windows-x64-Setup
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--action start"
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--action start"
-Name: "{group}\停止{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--action stop"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--action start"; IconFilename: "{app}\open.ico"
+Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--action start"; IconFilename: "{app}\open.ico"
+Name: "{group}\停止{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--action stop"; IconFilename: "{app}\stop.ico"
 Name: "{group}\卸载{#AppName}"; Filename: "{uninstallexe}"
 
 [Run]

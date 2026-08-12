@@ -5,6 +5,7 @@
     <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
     <key>CFBundleDisplayName</key><string>停止AI创作工作台</string>
     <key>CFBundleExecutable</key><string>stop-launcher</string>
+    <key>CFBundleIconFile</key><string>stop.icns</string>
     <key>CFBundleIdentifier</key><string>cc.aihub.infinite-canvas.stop</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>停止AI创作工作台</string>

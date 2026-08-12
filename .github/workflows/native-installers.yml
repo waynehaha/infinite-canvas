@@ -46,6 +46,8 @@ jobs:
           go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/native/bin/launcher.exe ./cmd/desktop-launcher
           $node = (Get-Command node).Source
           node scripts/native/assemble-bundle.mjs --target windows --output dist/native/windows-bundle --server dist/native/bin/server.exe --launcher dist/native/bin/launcher.exe --node $node
+          if (-not (Test-Path "dist/native/windows-bundle/open.ico")) { throw "Start icon is missing" }
+          if (-not (Test-Path "dist/native/windows-bundle/stop.ico")) { throw "Stop icon is missing" }
 
       - name: Smoke test native bundle
         shell: pwsh
@@ -210,6 +212,10 @@ jobs:
           hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/ai-workbench-dmg" dist/native/*macOS-Apple-Silicon.dmg
           test -x "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench"
           test -x "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/MacOS/stop-launcher"
+          test -s "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/Resources/open.icns"
+          test -s "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/Resources/stop.icns"
+          test "$(defaults read "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/Info" CFBundleIconFile)" = "open.icns"
+          test "$(defaults read "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/Info" CFBundleIconFile)" = "stop.icns"
           file "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench" | grep -Eq 'Mach-O .* executable'
           file "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/MacOS/stop-launcher" | grep -Eq 'Mach-O .* executable'
           ! strings "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/MacOS/stop-launcher" | grep -Eiq 'docker compose|Docker Desktop|docker-compose|open -a Docker'

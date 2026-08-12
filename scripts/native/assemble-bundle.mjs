@@ -19,7 +19,8 @@ await cp(join(root, "web", "public"), join(output, "web", "public"), { recursive
 await cp(join(root, "VERSION"), join(output, "VERSION"));
 await cp(join(root, "CHANGELOG.md"), join(output, "CHANGELOG.md"));
 await cp(join(root, "LICENSE"), join(output, "LICENSE"));
-await cp(join(root, "web", "src", "app", "favicon.ico"), join(output, "app.ico"));
+await cp(join(root, "packaging", "assets", "icons", "open.ico"), join(output, "open.ico"));
+await cp(join(root, "packaging", "assets", "icons", "stop.ico"), join(output, "stop.ico"));
 
 if (target === "windows") {
     await cp(server, join(output, "server.exe"));

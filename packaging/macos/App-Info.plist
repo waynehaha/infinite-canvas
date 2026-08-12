@@ -5,6 +5,7 @@
     <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
     <key>CFBundleDisplayName</key><string>AI创作工作台</string>
     <key>CFBundleExecutable</key><string>ai-creative-workbench</string>
+    <key>CFBundleIconFile</key><string>open.icns</string>
     <key>CFBundleIdentifier</key><string>cc.aihub.infinite-canvas</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>AI创作工作台</string>
