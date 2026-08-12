@@ -12,6 +12,7 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/c
 import { ModelPicker } from "@/components/model-picker";
 import { KlingV26WorkbenchPanel } from "@/app/(user)/video/components/kling-v26-workbench-panel";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
+import { confirmVideoPromptLength } from "@/components/video-prompt-length-confirm";
 import { WorkbenchDiagnosticLogButton } from "@/components/layout/diagnostic-log-modal";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -621,6 +622,7 @@ export default function VideoPage() {
     const generate = async () => {
         const snapshot = buildRequestSnapshot();
         if (!snapshot) return;
+        if (!(await confirmVideoPromptLength(snapshot.model, snapshot.text))) return;
         setPrompt("");
         await submitGenerationSnapshot(snapshot);
     };
@@ -769,10 +771,11 @@ export default function VideoPage() {
         }
     };
 
-    const retryResult = (result: GenerationResult) => {
+    const retryResult = async (result: GenerationResult) => {
         const retryChannelId = videoTaskChannelId(result.task);
         const snapshot = buildRequestSnapshot({ promptText: result.prompt, negativePromptText: result.config.videoNegativePrompt || "", referenceItems: result.references, firstFrameItem: result.firstFrame, lastFrameItem: result.lastFrame, videoReferenceItems: result.videoReferences, audioReferenceItems: result.audioReferences, taskCountValue: 1, configValue: { ...videoConfig, ...result.config, ...(retryChannelId ? { videoChannelId: retryChannelId, activeChannelId: retryChannelId } : {}), model: result.model, videoModel: result.model }, modelValue: result.model });
         if (!snapshot) return;
+        if (!(await confirmVideoPromptLength(snapshot.model, snapshot.text))) return;
         setResults((value) => value.filter((item) => item.id !== result.id));
         void submitGenerationSnapshot(snapshot);
     };
@@ -1138,10 +1141,11 @@ export default function VideoPage() {
         updateConfig("videoCharacterOrientation", normalizeCharacterOrientation(log.config.videoCharacterOrientation));
     };
 
-    const retryGenerationLog = (log: GenerationLog) => {
+    const retryGenerationLog = async (log: GenerationLog) => {
         const retryChannelId = videoTaskChannelId(log.task);
         const snapshot = buildRequestSnapshot({ promptText: log.prompt, negativePromptText: log.config.videoNegativePrompt || "", referenceItems: log.references || [], firstFrameItem: log.firstFrame || null, lastFrameItem: log.lastFrame || null, videoReferenceItems: log.videoReferences || [], audioReferenceItems: log.audioReferences || [], taskCountValue: 1, configValue: { ...videoConfig, ...log.config, ...(retryChannelId ? { videoChannelId: retryChannelId, activeChannelId: retryChannelId } : {}), model: log.model, videoModel: log.model }, modelValue: log.model });
         if (!snapshot) return;
+        if (!(await confirmVideoPromptLength(snapshot.model, snapshot.text))) return;
         void submitGenerationSnapshot(snapshot);
     };
 

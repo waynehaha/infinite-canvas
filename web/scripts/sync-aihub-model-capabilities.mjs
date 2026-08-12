@@ -82,6 +82,7 @@ function renderDocument(capabilities, sourceUrl, verifiedAt) {
 
 function adjustableText(item) {
     const values = [];
+    if (item.promptLengthHint) values.push(`提示词参考上限：约 ${item.promptLengthHint} 字符（仅提醒，不拦截）`);
     if (item.quality) values.push(`质量：${optionText(item.quality)}`);
     if (item.size) values.push(`画幅：${optionText(item.size)}`);
     if (item.aspectRatio) values.push(`${item.model.startsWith("grok-") ? "尺寸" : "比例"}：${optionText(item.aspectRatio)}`);

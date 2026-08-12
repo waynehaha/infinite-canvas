@@ -118,6 +118,7 @@ function validateCapability(value: Record<string, unknown>, model: string, kind:
     if (!isCapabilityStatus(value.status) || typeof value.verifiedAt !== "string" || typeof value.source !== "string" || typeof value.endpoint !== "string") throw new Error(`模型 ${model} 的能力元数据无效`);
     if (!/^https:\/\//i.test(value.source) || !value.endpoint.startsWith("/")) throw new Error(`模型 ${model} 的来源或接口地址无效`);
     if (!isStringArray(value.fixedSummary) || !isStringArray(value.hidden)) throw new Error(`模型 ${model} 的说明字段无效`);
+    if (value.promptLengthHint !== undefined && (typeof value.promptLengthHint !== "number" || !Number.isInteger(value.promptLengthHint) || value.promptLengthHint <= 0)) throw new Error(`模型 ${model} 的提示词长度参考值无效`);
     for (const key of ["quality", "size", "aspectRatio", "duration", "resolution", "count"]) if (value[key] !== undefined) validateControl(value[key], model, key);
     if (value.references !== undefined) validateReferences(value.references, model);
     return value as AIHubCapability;

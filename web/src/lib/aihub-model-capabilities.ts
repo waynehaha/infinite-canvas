@@ -59,6 +59,8 @@ type AIHubCapabilityBase = {
     endpoint: string;
     fixedSummary: readonly string[];
     hidden: readonly string[];
+    /** Current upstream hint only; clients must not treat this as a hard validation rule. */
+    promptLengthHint?: number;
 };
 
 export type AIHubImageCapability = AIHubCapabilityBase & {
@@ -302,6 +304,7 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
         source,
         endpoint: "/videos",
         fixedSummary: ["按次计费", "支持 480p / 720p"],
+        promptLengthHint: 4096,
         hidden: ["生成音频", "水印", "参考视频", "参考音频"],
         aspectRatio: { mode: "select" as const, default: "16:9", options: grokRatios },
         duration: { mode: "range" as const, default: 6, min: 1, max: 15, step: 1, unit: "秒", quick: [6, 10, 15] },

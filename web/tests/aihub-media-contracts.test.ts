@@ -14,6 +14,7 @@ const { AIHUB_MODEL_CAPABILITIES, getAIHubModelCapability, normalizeAIHubRangeVa
 const { createAIHubChatImageBody, createAIHubImageGenerationBody, extractAIHubChatImageUrls } = await import("../src/services/api/aihub/image.ts");
 const { createAIHubVideoBody } = await import("../src/services/api/aihub/video.ts");
 const { getAIHubImageReferenceError, getAIHubVideoReferenceError, isAIHubVideoPromptRequired } = await import("../src/lib/aihub-reference-policy.ts");
+const { getVideoPromptLengthHint, videoPromptLengthHintText } = await import("../src/lib/video-prompt-length-hint.ts");
 
 const videoInput = (overrides: Record<string, unknown> = {}) => ({
     model: "omni-fast",
@@ -43,6 +44,15 @@ test("默认媒体模型都有能力定义，专用模型能力也可单独维�
 test("模型能力查找不区分大小写", () => {
     assert.equal(getAIHubModelCapability("OMNI-FAST")?.model, "omni-fast");
     assert.equal(getAIHubModelCapability("grok-imagine-video-1.5-preview")?.model, "grok-imagine-video-1.5");
+});
+
+test("Grok 超长提示词只给参考提示，不形成硬限制", () => {
+    assert.equal(getVideoPromptLengthHint("grok-imagine-video", "A".repeat(4096)), null);
+    const hint = getVideoPromptLengthHint("grok-imagine-video", "A".repeat(4100));
+    assert.deepEqual(hint, { current: 4100, hint: 4096, overBy: 4 });
+    assert.match(videoPromptLengthHintText(hint!), /只是提交前提示，不会强制拦截/);
+    assert.deepEqual(getVideoPromptLengthHint("grok-imagine-video", "😀".repeat(4100)), { current: 4100, hint: 4096, overBy: 4 });
+    assert.equal(getVideoPromptLengthHint("omni-fast", "A".repeat(5000)), null);
 });
 
 test("Grok 文生视频使用 JSON 协议和文档字段", () => {

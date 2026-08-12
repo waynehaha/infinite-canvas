@@ -23,6 +23,7 @@ import { getAIHubImageCapability, normalizeAIHubRangeValue } from "@/lib/aihub-m
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { DiagnosticLogModal } from "@/components/layout/diagnostic-log-modal";
+import { confirmVideoPromptLength } from "@/components/video-prompt-length-confirm";
 import { isKIEKlingV3Config } from "@/components/video-settings-panel";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -2566,6 +2567,13 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 mode === "video" || (mode === "image" && !isPanoramaNodeType(sourceNode?.type))
                     ? applyCameraPrompt(effectivePrompt, sourceNode?.metadata?.cameraControl)
                     : effectivePrompt;
+            if (mode === "video") {
+                if (!(await confirmVideoPromptLength(generationConfig.model, requestPrompt))) {
+                    finishDiagnosticTask(diagnosticTaskId, "failed", "用户返回修改提示词，尚未发送请求");
+                    setRunningNodeId(null);
+                    return;
+                }
+            }
             const markSourceStatus = !isCanvasImageNodeType(sourceNode?.type) && !editingTextNode;
             const statusPrompt = sourceNode?.type === CanvasNodeType.Config ? effectivePrompt : prompt;
             if (!effectivePrompt && (mode === "text" || mode === "audio")) {
@@ -3584,6 +3592,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             void registerDiagnosticReferenceAssets(retryDiagnosticTaskId, diagnosticReferenceAssetsFromContext(retryDiagnosticContext, retryMode));
             appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "reference", status: "success", title: retryReferences.length ? "重试所需参考素材已读取" : "本次重试没有参考素材", data: { references: retryReferences } });
 
+            const videoGenerationConfig = node.type === CanvasNodeType.Video ? (context ? withCanvasVideoAdvancedConfig(generationConfig, context) : generationConfig) : null;
+            if (videoGenerationConfig && !(await confirmVideoPromptLength(videoGenerationConfig.model, requestPrompt))) {
+                finishDiagnosticTask(retryDiagnosticTaskId, "failed", "用户返回修改提示词，尚未发送请求");
+                return;
+            }
+
             setRunningNodeId(node.id);
             const retryStartedAt = Date.now();
             const retryVideoTaskId = node.type === CanvasNodeType.Video ? `client_video_task_${node.id}` : "";
@@ -3625,7 +3639,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    const videoGenerationConfig = context ? withCanvasVideoAdvancedConfig(generationConfig, context) : generationConfig;
+                    if (!videoGenerationConfig) return;
                     const { references, firstFrame, lastFrame } = resolveCanvasVideoImageReferences(videoGenerationConfig.model, retryImages, context?.firstFrame, context?.lastFrame);
                     const created = await createVideoGenerationTask(videoGenerationConfig, requestPrompt, { references, firstFrame, lastFrame, videoReferences: context?.referenceVideos || [], audioReferences: context?.referenceAudios || [] }, undefined, {
                         clientTaskId: retryVideoTaskId,
