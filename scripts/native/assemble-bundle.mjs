@@ -1,4 +1,4 @@
-import { chmod, cp, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,14 +13,14 @@ if (!new Set(["windows", "macos"]).has(target)) throw new Error(`Unsupported tar
 
 await rm(output, { recursive: true, force: true });
 await mkdir(join(output, "web", ".next"), { recursive: true });
-await cp(join(root, "web", ".next", "standalone"), join(output, "web"), { recursive: true });
+await cp(join(root, "web", ".next", "standalone"), join(output, "web"), { recursive: true, verbatimSymlinks: true });
+await removeBrokenLinks(join(output, "web"));
 await cp(join(root, "web", ".next", "static"), join(output, "web", ".next", "static"), { recursive: true });
 await cp(join(root, "web", "public"), join(output, "web", "public"), { recursive: true });
 await cp(join(root, "VERSION"), join(output, "VERSION"));
 await cp(join(root, "CHANGELOG.md"), join(output, "CHANGELOG.md"));
 await cp(join(root, "LICENSE"), join(output, "LICENSE"));
 await cp(join(root, "packaging", "assets", "icons", "open.ico"), join(output, "open.ico"));
-await cp(join(root, "packaging", "assets", "icons", "stop.ico"), join(output, "stop.ico"));
 
 if (target === "windows") {
     await cp(server, join(output, "server.exe"));
@@ -57,4 +57,22 @@ function required(name) {
     const value = options.get(name);
     if (!value) throw new Error(`Missing --${name}`);
     return value;
+}
+
+async function removeBrokenLinks(directory) {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+        const path = join(directory, entry.name);
+        const info = await lstat(path);
+        if (info.isSymbolicLink()) {
+            try {
+                await stat(path);
+            } catch (error) {
+                if (error?.code === "ENOENT") await rm(path, { force: true });
+                else throw error;
+            }
+        } else if (info.isDirectory()) {
+            await removeBrokenLinks(path);
+        }
+    }
 }

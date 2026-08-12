@@ -28,12 +28,15 @@ type launcherOptions struct {
 	webPort     int
 	noBrowser   bool
 	noDialog    bool
+	noTray      bool
+	trayPID     int
 	waitTimeout time.Duration
 }
 
 type launcherState struct {
 	APIPID    int       `json:"apiPid"`
 	WebPID    int       `json:"webPid"`
+	TrayPID   int       `json:"trayPid,omitempty"`
 	APIPort   int       `json:"apiPort"`
 	WebPort   int       `json:"webPort"`
 	Version   string    `json:"version"`
@@ -79,16 +82,17 @@ func recordLauncherError(options launcherOptions, runErr error) {
 func parseOptions() (launcherOptions, error) {
 	var options launcherOptions
 	var waitSeconds int
-	flag.StringVar(&options.action, "action", actionFromExecutable(), "start, stop or status")
+	flag.StringVar(&options.action, "action", actionFromExecutable(), "start, open, restart, stop or status")
 	flag.StringVar(&options.appDir, "app-dir", "", "application bundle directory")
 	flag.StringVar(&options.dataDir, "data-dir", "", "application data directory")
 	flag.IntVar(&options.webPort, "web-port", 0, "persistent web port used to recover browser data")
 	flag.BoolVar(&options.noBrowser, "no-browser", false, "do not open the browser")
 	flag.BoolVar(&options.noDialog, "no-dialog", false, "do not show native dialogs")
+	flag.BoolVar(&options.noTray, "no-tray", false, "start services without a system tray")
 	flag.IntVar(&waitSeconds, "wait-timeout", 120, "startup timeout in seconds")
 	flag.Parse()
 	options.action = strings.ToLower(strings.TrimSpace(options.action))
-	if options.action != "start" && options.action != "stop" && options.action != "status" {
+	if options.action != "start" && options.action != "open" && options.action != "restart" && options.action != "stop" && options.action != "status" {
 		return options, fmt.Errorf("不支持的操作：%s", options.action)
 	}
 	if options.webPort < 0 || options.webPort > 65535 {
@@ -121,16 +125,14 @@ func run(options launcherOptions) error {
 	if err := os.MkdirAll(filepath.Join(dataDir, "run"), 0o755); err != nil {
 		return fmt.Errorf("无法创建运行目录：%w", err)
 	}
-	releaseLock, err := acquireLock(filepath.Join(dataDir, "run", "launcher.lock"))
-	if err != nil {
-		return err
-	}
-	defer releaseLock()
-
 	statePath := filepath.Join(dataDir, "run", "state.json")
 	switch options.action {
+	case "open":
+		return openRunningWorkbench(statePath)
+	case "restart":
+		return withLauncherLock(dataDir, func() error { return restartServices(appDir, dataDir, statePath, options) })
 	case "stop":
-		return stopServices(statePath, options.noDialog)
+		return withLauncherLock(dataDir, func() error { return stopServices(statePath, options.noDialog, true) })
 	case "status":
 		state, _ := readState(statePath)
 		if state != nil && stateHealthy(*state) {
@@ -139,8 +141,45 @@ func run(options launcherOptions) error {
 		}
 		return errors.New("未运行")
 	default:
-		return startServices(appDir, dataDir, statePath, options)
+		runTrayAfterStart := false
+		if !options.noTray {
+			options.trayPID = os.Getpid()
+		}
+		if err := withLauncherLock(dataDir, func() error {
+			state, _ := readState(statePath)
+			runTrayAfterStart = !options.noTray && (state == nil || !stateHealthy(*state) || state.TrayPID <= 0 || !processAlive(state.TrayPID))
+			if err := startServices(appDir, dataDir, statePath, options); err != nil {
+				return err
+			}
+			if runTrayAfterStart {
+				state, err = readState(statePath)
+				if err != nil {
+					return err
+				}
+				state.TrayPID = options.trayPID
+				return writeState(statePath, *state)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if runTrayAfterStart {
+			if err := runTray(trayRuntime{appDir: appDir, dataDir: dataDir, statePath: statePath, options: options}); err != nil {
+				_ = withLauncherLock(dataDir, func() error { return stopServices(statePath, true, false) })
+				return err
+			}
+		}
+		return nil
 	}
+}
+
+func withLauncherLock(dataDir string, action func() error) error {
+	releaseLock, err := acquireLock(filepath.Join(dataDir, "run", "launcher.lock"))
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+	return action()
 }
 
 func startServices(appDir string, dataDir string, statePath string, options launcherOptions) error {
@@ -235,7 +274,7 @@ func startServices(appDir string, dataDir string, statePath string, options laun
 	webPID := web.Process.Pid
 	_ = web.Process.Release()
 
-	state := launcherState{APIPID: apiPID, WebPID: webPID, APIPort: apiPort, WebPort: webPort, Version: readVersion(appDir), StartedAt: time.Now()}
+	state := launcherState{APIPID: apiPID, WebPID: webPID, TrayPID: options.trayPID, APIPort: apiPort, WebPort: webPort, Version: readVersion(appDir), StartedAt: time.Now()}
 	if err := writeState(statePath, state); err != nil {
 		_ = terminateState(state)
 		return err
@@ -474,7 +513,32 @@ func stateHealthy(state launcherState) bool {
 	return waitForURL(fmt.Sprintf("http://127.0.0.1:%d/api/health", state.APIPort), time.Second) == nil && waitForURL(fmt.Sprintf("http://127.0.0.1:%d/", state.WebPort), time.Second) == nil
 }
 
-func stopServices(statePath string, noDialog bool) error {
+func openRunningWorkbench(statePath string) error {
+	state, err := readState(statePath)
+	if err != nil || state == nil || !stateHealthy(*state) {
+		return errors.New("AI 创作工作台没有运行")
+	}
+	return openBrowser(fmt.Sprintf("http://127.0.0.1:%d/", state.WebPort))
+}
+
+func restartServices(appDir string, dataDir string, statePath string, options launcherOptions) error {
+	state, err := readState(statePath)
+	trayPID := options.trayPID
+	if err == nil && state != nil {
+		trayPID = state.TrayPID
+		if err := stopServices(statePath, true, false); err != nil {
+			return err
+		}
+	}
+	options.action = "start"
+	options.noBrowser = true
+	options.noDialog = true
+	options.noTray = true
+	options.trayPID = trayPID
+	return startServices(appDir, dataDir, statePath, options)
+}
+
+func stopServices(statePath string, noDialog bool, stopTray bool) error {
 	state, err := readState(statePath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -487,6 +551,11 @@ func stopServices(statePath string, noDialog bool) error {
 	}
 	if err := terminateState(*state); err != nil {
 		return err
+	}
+	if stopTray && state.TrayPID > 0 && state.TrayPID != os.Getpid() {
+		if err := terminateSingleProcess(state.TrayPID); err != nil {
+			return err
+		}
 	}
 	if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
 		return err

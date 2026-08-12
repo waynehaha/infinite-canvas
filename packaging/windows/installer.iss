@@ -37,11 +37,27 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 [Icons]
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--action start"; IconFilename: "{app}\open.ico"
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--action start"; IconFilename: "{app}\open.ico"
-Name: "{group}\停止{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--action stop"; IconFilename: "{app}\stop.ico"
 Name: "{group}\卸载{#AppName}"; Filename: "{uninstallexe}"
 
 [Run]
 Filename: "{app}\{#AppExe}"; Parameters: "--action start"; Description: "启动{#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "{app}\{#AppExe}"; Parameters: "--action stop --no-dialog"; Flags: runhidden waituntilterminated skipifdoesntexist
+Filename: "{app}\{#AppExe}"; Parameters: "--action stop --no-dialog --no-tray"; Flags: runhidden waituntilterminated skipifdoesntexist
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+  LauncherPath: String;
+begin
+  Result := '';
+  ResultCode := 0;
+  LauncherPath := ExpandConstant('{app}\{#AppExe}');
+  if FileExists(LauncherPath) and
+     not Exec(LauncherPath, '--action stop --no-dialog --no-tray', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode) then
+    Result := '无法停止正在运行的 AI 创作工作台，请从系统托盘退出后重试。';
+  if ResultCode <> 0 then
+    Result := '无法停止正在运行的 AI 创作工作台，请从系统托盘退出后重试。';
+end;

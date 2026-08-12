@@ -47,14 +47,13 @@ jobs:
           $node = (Get-Command node).Source
           node scripts/native/assemble-bundle.mjs --target windows --output dist/native/windows-bundle --server dist/native/bin/server.exe --launcher dist/native/bin/launcher.exe --node $node
           if (-not (Test-Path "dist/native/windows-bundle/open.ico")) { throw "Start icon is missing" }
-          if (-not (Test-Path "dist/native/windows-bundle/stop.ico")) { throw "Stop icon is missing" }
 
       - name: Smoke test native bundle
         shell: pwsh
         run: |
           $bundle = (Resolve-Path dist/native/windows-bundle).Path
           $data = Join-Path $env:RUNNER_TEMP "ai-workbench-native-data"
-          $start = Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "start", "--app-dir", $bundle, "--data-dir", $data, "--no-browser", "--no-dialog", "--wait-timeout", "180" -PassThru
+          $start = Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "start", "--app-dir", $bundle, "--data-dir", $data, "--no-browser", "--no-dialog", "--no-tray", "--wait-timeout", "180" -PassThru
           $start.WaitForExit()
           if ($start.ExitCode -ne 0) {
             Get-ChildItem "$data/logs" -File -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "=== $($_.Name) ==="; Get-Content $_.FullName }
@@ -63,25 +62,25 @@ jobs:
           $first = Get-Content "$data/run/state.json" -Raw | ConvertFrom-Json
           Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$($first.webPort)/" -TimeoutSec 10 | Out-Null
           Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$($first.apiPort)/api/health" -TimeoutSec 10 | Out-Null
-          $repeatedStart = Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "start", "--app-dir", $bundle, "--data-dir", $data, "--no-browser", "--no-dialog" -PassThru
+          $repeatedStart = Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "start", "--app-dir", $bundle, "--data-dir", $data, "--no-browser", "--no-dialog", "--no-tray" -PassThru
           $repeatedStart.WaitForExit()
           if ($repeatedStart.ExitCode -ne 0) { throw "Repeated startup failed" }
           $second = Get-Content "$data/run/state.json" -Raw | ConvertFrom-Json
           if ($first.apiPid -ne $second.apiPid -or $first.webPid -ne $second.webPid) { throw "Repeated startup created duplicate processes" }
           if (-not (Test-Path "$data/data/infinite-canvas.db")) { throw "SQLite data was not created" }
-          $stop = Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "stop", "--app-dir", $bundle, "--data-dir", $data, "--no-dialog" -PassThru
+          $stop = Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "stop", "--app-dir", $bundle, "--data-dir", $data, "--no-dialog", "--no-tray" -PassThru
           $stop.WaitForExit()
           if ($stop.ExitCode -ne 0) { throw "Stop failed" }
           Start-Sleep -Seconds 2
           if (Get-Process -Id $first.apiPid -ErrorAction SilentlyContinue) { throw "API process is still running" }
           if (Get-Process -Id $first.webPid -ErrorAction SilentlyContinue) { throw "Web process is still running" }
-          $restart = Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "start", "--app-dir", $bundle, "--data-dir", $data, "--no-browser", "--no-dialog", "--wait-timeout", "180" -PassThru
+          $restart = Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "start", "--app-dir", $bundle, "--data-dir", $data, "--no-browser", "--no-dialog", "--no-tray", "--wait-timeout", "180" -PassThru
           $restart.WaitForExit()
           if ($restart.ExitCode -ne 0) { throw "Restart failed" }
           $restarted = Get-Content "$data/run/state.json" -Raw | ConvertFrom-Json
           if ($first.webPort -ne $restarted.webPort) { throw "Web port changed after restart" }
           if (-not (Test-Path "$data/desktop.json")) { throw "Persistent desktop config was not created" }
-          Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "stop", "--app-dir", $bundle, "--data-dir", $data, "--no-dialog" -Wait
+          Start-Process -FilePath "$bundle/launcher.exe" -ArgumentList "--action", "stop", "--app-dir", $bundle, "--data-dir", $data, "--no-dialog", "--no-tray" -Wait
 
       - name: Build Windows installer
         shell: pwsh
@@ -105,7 +104,7 @@ jobs:
           $process = Start-Process $setup.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$install" -Wait -PassThru
           if ($process.ExitCode -ne 0 -or -not (Test-Path "$install/launcher.exe")) { throw "Silent installation failed" }
           $data = Join-Path $env:RUNNER_TEMP "ai-workbench-installed-data"
-          $start = Start-Process -FilePath "$install/launcher.exe" -ArgumentList "--action", "start", "--data-dir", $data, "--no-browser", "--no-dialog", "--wait-timeout", "180" -PassThru
+          $start = Start-Process -FilePath "$install/launcher.exe" -ArgumentList "--action", "start", "--data-dir", $data, "--no-browser", "--no-dialog", "--no-tray", "--wait-timeout", "180" -PassThru
           $start.WaitForExit()
           if ($start.ExitCode -ne 0) {
             Get-ChildItem "$data/logs" -File -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "=== $($_.Name) ==="; Get-Content $_.FullName }
@@ -114,7 +113,7 @@ jobs:
           $state = Get-Content "$data/run/state.json" -Raw | ConvertFrom-Json
           Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$($state.webPort)/" -TimeoutSec 10 | Out-Null
           "keep-after-uninstall" | Set-Content -Encoding ascii "$data/data/user-data-sentinel.txt"
-          $stop = Start-Process -FilePath "$install/launcher.exe" -ArgumentList "--action", "stop", "--data-dir", $data, "--no-dialog" -PassThru
+          $stop = Start-Process -FilePath "$install/launcher.exe" -ArgumentList "--action", "stop", "--data-dir", $data, "--no-dialog", "--no-tray" -PassThru
           $stop.WaitForExit()
           if ($stop.ExitCode -ne 0) { throw "Installed application failed to stop" }
           $uninstaller = Get-ChildItem "$install/unins*.exe" | Select-Object -First 1
@@ -180,28 +179,28 @@ jobs:
         run: |
           bundle="$PWD/dist/native/macos-bundle"
           data="$RUNNER_TEMP/ai-workbench-native-data"
-          "$bundle/launcher" --action start --app-dir "$bundle" --data-dir "$data" --no-browser --no-dialog --wait-timeout 180
+          "$bundle/launcher" --action start --app-dir "$bundle" --data-dir "$data" --no-browser --no-dialog --no-tray --wait-timeout 180
           first_api_pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["apiPid"])' "$data/run/state.json")"
           first_web_pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["webPid"])' "$data/run/state.json")"
           api_port="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["apiPort"])' "$data/run/state.json")"
           web_port="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["webPort"])' "$data/run/state.json")"
           curl -fsS "http://127.0.0.1:$api_port/api/health"
           curl -fsS -o /dev/null "http://127.0.0.1:$web_port/"
-          "$bundle/launcher" --action start --app-dir "$bundle" --data-dir "$data" --no-browser --no-dialog
+          "$bundle/launcher" --action start --app-dir "$bundle" --data-dir "$data" --no-browser --no-dialog --no-tray
           second_api_pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["apiPid"])' "$data/run/state.json")"
           second_web_pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["webPid"])' "$data/run/state.json")"
           test "$first_api_pid" = "$second_api_pid"
           test "$first_web_pid" = "$second_web_pid"
           test -f "$data/data/infinite-canvas.db"
-          "$bundle/launcher" --action stop --app-dir "$bundle" --data-dir "$data" --no-dialog
+          "$bundle/launcher" --action stop --app-dir "$bundle" --data-dir "$data" --no-dialog --no-tray
           sleep 2
           ! kill -0 "$first_api_pid" 2>/dev/null
           ! kill -0 "$first_web_pid" 2>/dev/null
-          "$bundle/launcher" --action start --app-dir "$bundle" --data-dir "$data" --no-browser --no-dialog --wait-timeout 180
+          "$bundle/launcher" --action start --app-dir "$bundle" --data-dir "$data" --no-browser --no-dialog --no-tray --wait-timeout 180
           restarted_web_port="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["webPort"])' "$data/run/state.json")"
           test "$web_port" = "$restarted_web_port"
           test -f "$data/desktop.json"
-          "$bundle/launcher" --action stop --app-dir "$bundle" --data-dir "$data" --no-dialog
+          "$bundle/launcher" --action stop --app-dir "$bundle" --data-dir "$data" --no-dialog --no-tray
 
       - name: Build and verify macOS DMG
         run: |
@@ -211,23 +210,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ai-workbench-dmg"
           hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/ai-workbench-dmg" dist/native/*macOS-Apple-Silicon.dmg
           test -x "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench"
-          test -x "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/MacOS/stop-launcher"
+          test ! -e "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app"
           test -s "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/Resources/open.icns"
-          test -s "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/Resources/stop.icns"
           test "$(defaults read "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/Info" CFBundleIconFile)" = "open.icns"
-          test "$(defaults read "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/Info" CFBundleIconFile)" = "stop.icns"
+          test "$(defaults read "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/Info" LSUIElement)" = "1"
           file "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench" | grep -Eq 'Mach-O .* executable'
-          file "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/MacOS/stop-launcher" | grep -Eq 'Mach-O .* executable'
-          ! strings "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/MacOS/stop-launcher" | grep -Eiq 'docker compose|Docker Desktop|docker-compose|open -a Docker'
-          test ! -e "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/docker-compose.desktop.yml"
-          test ! -e "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/data"
+          ! strings "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench" | grep -Eiq 'docker compose|Docker Desktop|docker-compose|open -a Docker'
           codesign --verify --deep --strict "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app"
-          codesign --verify --deep --strict "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app"
           installed_data="$RUNNER_TEMP/ai-workbench-installed-data"
-          "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench" --data-dir "$installed_data" --no-browser --no-dialog --wait-timeout 180
+          "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench" --data-dir "$installed_data" --no-browser --no-dialog --no-tray --wait-timeout 180
           installed_web_port="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["webPort"])' "$installed_data/run/state.json")"
           curl -fsS -o /dev/null "http://127.0.0.1:$installed_web_port/"
-          INFINITE_CANVAS_DATA_DIR="$installed_data" "$RUNNER_TEMP/ai-workbench-dmg/停止AI创作工作台.app/Contents/MacOS/stop-launcher" --no-dialog
+          "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench" --action stop --data-dir "$installed_data" --no-dialog --no-tray
           test ! -e "$installed_data/run/state.json"
           hdiutil detach "$RUNNER_TEMP/ai-workbench-dmg"
 
