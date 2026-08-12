@@ -92,3 +92,12 @@ func confirmQuit(title string, message string) bool {
 	output, err := exec.Command("osascript", "-e", script).Output()
 	return err == nil && strings.TrimSpace(string(output)) == "退出"
 }
+
+func confirmServiceRestart(title string, message string, confirmLabel string) bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+	script := `button returned of (display dialog ` + strconv.Quote(message) + ` with title ` + strconv.Quote(title) + ` buttons {"稍后", ` + strconv.Quote(confirmLabel) + `} default button "稍后" cancel button "稍后" with icon caution)`
+	output, err := exec.Command("osascript", "-e", script).Output()
+	return err == nil && strings.TrimSpace(string(output)) == confirmLabel
+}

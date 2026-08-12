@@ -80,3 +80,18 @@ func confirmQuit(title string, message string) bool {
 	result, _, _ := messageBox.Call(0, uintptr(unsafe.Pointer(messagePointer)), uintptr(unsafe.Pointer(titlePointer)), messageBoxYesNo|messageBoxWarning)
 	return result == messageBoxResultYes
 }
+
+func confirmServiceRestart(title string, message string, confirmLabel string) bool {
+	const (
+		messageBoxYesNo     = uintptr(0x00000004)
+		messageBoxWarning   = uintptr(0x00000030)
+		messageBoxDefaultNo = uintptr(0x00000100)
+		messageBoxResultYes = uintptr(6)
+	)
+	user32 := syscall.NewLazyDLL("user32.dll")
+	messageBox := user32.NewProc("MessageBoxW")
+	messagePointer, _ := syscall.UTF16PtrFromString(message + "\n\n选择“是”" + confirmLabel + "，选择“否”稍后处理。")
+	titlePointer, _ := syscall.UTF16PtrFromString(title)
+	result, _, _ := messageBox.Call(0, uintptr(unsafe.Pointer(messagePointer)), uintptr(unsafe.Pointer(titlePointer)), messageBoxYesNo|messageBoxWarning|messageBoxDefaultNo)
+	return result == messageBoxResultYes
+}

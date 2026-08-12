@@ -2,10 +2,14 @@ package main
 
 import (
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAvailablePort(t *testing.T) {
@@ -95,5 +99,51 @@ func TestPersistentWebPortDoesNotReplaceOccupiedPort(t *testing.T) {
 	}
 	if _, err := persistentWebPort(path, 0, 0); err == nil || !strings.Contains(err.Error(), "不会自动更换端口") {
 		t.Fatalf("expected occupied-port protection, got %v", err)
+	}
+}
+
+func TestVersionsDifferIgnoresLegacyVPrefix(t *testing.T) {
+	if versionsDiffer("v0.3.1", "0.3.1") {
+		t.Fatal("equivalent versions should not trigger an upgrade")
+	}
+	if !versionsDiffer("v0.3.0", "v0.3.1") {
+		t.Fatal("different versions should trigger an upgrade prompt")
+	}
+}
+
+func TestNormalizeVersionTrimsWhitespace(t *testing.T) {
+	if got := normalizeVersion("  v0.3.1\n"); got != "0.3.1" {
+		t.Fatalf("normalizeVersion() = %q", got)
+	}
+}
+
+func TestRunKeepsHealthyOlderServicesInSilentMode(t *testing.T) {
+	service := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer service.Close()
+	port, err := strconv.Atoi(strings.TrimPrefix(service.URL, "http://127.0.0.1:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dataDir := t.TempDir()
+	statePath := filepath.Join(dataDir, "run", "state.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := launcherState{APIPID: os.Getpid(), WebPID: os.Getpid(), APIPort: port, WebPort: port, Version: "v0.3.0", StartedAt: time.Now()}
+	if err := writeState(statePath, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(launcherOptions{appDir: t.TempDir(), dataDir: dataDir, noBrowser: true, noDialog: true, noTray: true, waitTimeout: time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := readState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Version != legacy.Version || current.APIPID != legacy.APIPID || current.WebPID != legacy.WebPID {
+		t.Fatalf("healthy legacy service was changed: %#v", current)
 	}
 }

@@ -58,6 +58,10 @@ func handleTrayActions(runtime trayRuntime, statusItem, openItem, restartItem, q
 			if !busy.CompareAndSwap(false, true) {
 				continue
 			}
+			if !confirmServiceRestart(appName, "重启会短暂关闭本地服务，正在提交或生成中的任务可能中断。确认当前没有重要任务后再继续。", "重启") {
+				busy.Store(false)
+				continue
+			}
 			statusItem.SetTitle("正在重启服务...")
 			openItem.Disable()
 			restartItem.Disable()

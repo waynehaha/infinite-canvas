@@ -148,6 +148,19 @@ func run(options launcherOptions) error {
 		if err := withLauncherLock(dataDir, func() error {
 			state, _ := readState(statePath)
 			runTrayAfterStart = !options.noTray && (state == nil || !stateHealthy(*state) || state.TrayPID <= 0 || !processAlive(state.TrayPID))
+			installedVersion := readVersion(appDir)
+			if state != nil && stateHealthy(*state) && versionsDiffer(state.Version, installedVersion) && !options.noDialog {
+				message := fmt.Sprintf("当前仍在运行 %s，已安装 %s。\n\n重启后会继续使用原有画布和素材，但正在提交或生成中的任务可能中断。确认当前没有重要任务后再重启。", state.Version, installedVersion)
+				if confirmServiceRestart(appName, message, "重启升级") {
+					if err := restartServices(appDir, dataDir, statePath, options); err != nil {
+						return err
+					}
+					if !options.noBrowser {
+						return openRunningWorkbench(statePath)
+					}
+					return nil
+				}
+			}
 			if err := startServices(appDir, dataDir, statePath, options); err != nil {
 				return err
 			}
@@ -525,7 +538,9 @@ func restartServices(appDir string, dataDir string, statePath string, options la
 	state, err := readState(statePath)
 	trayPID := options.trayPID
 	if err == nil && state != nil {
-		trayPID = state.TrayPID
+		if state.TrayPID > 0 {
+			trayPID = state.TrayPID
+		}
 		if err := stopServices(statePath, true, false); err != nil {
 			return err
 		}
