@@ -31,6 +31,10 @@ verify_native_launcher() {
 verify_native_launcher "$APP/Contents/MacOS/ai-creative-workbench"
 
 sed "s/__APP_VERSION__/$VERSION/g" "$ROOT_DIR/packaging/macos/App-Info.plist" > "$APP/Contents/Info.plist"
+if /usr/libexec/PlistBuddy -c 'Print :LSMultipleInstancesProhibited' "$APP/Contents/Info.plist" >/dev/null 2>&1; then
+    echo "错误：macOS 安装包不能启用 LSMultipleInstancesProhibited，后台网页进程会被系统误认为主应用实例" >&2
+    exit 1
+fi
 chmod +x "$APP/Contents/MacOS/ai-creative-workbench"
 ln -s /Applications "$WORK_DIR/Applications"
 codesign --force --deep --sign - "$APP"

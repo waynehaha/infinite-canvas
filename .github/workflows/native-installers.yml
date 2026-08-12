@@ -214,6 +214,7 @@ jobs:
           test -s "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/Resources/open.icns"
           test "$(defaults read "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/Info" CFBundleIconFile)" = "open.icns"
           test "$(defaults read "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/Info" LSUIElement)" = "1"
+          ! defaults read "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/Info" LSMultipleInstancesProhibited >/dev/null 2>&1
           file "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench" | grep -Eq 'Mach-O .* executable'
           ! strings "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app/Contents/MacOS/ai-creative-workbench" | grep -Eiq 'docker compose|Docker Desktop|docker-compose|open -a Docker'
           codesign --verify --deep --strict "$RUNNER_TEMP/ai-workbench-dmg/AI创作工作台.app"
