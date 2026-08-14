@@ -105,6 +105,15 @@ test("生图工作台记录结果不可显示异常并支持历史补充日志",
     assert.match(diagnosticService, /reconstructed: true/);
 });
 
+test("画布图片重试会立即接收已返回结果并结束诊断任务", async () => {
+    const webRoot = new URL("../", import.meta.url);
+    const canvas = await readFile(new URL("src/app/(user)/canvas/[id]/canvas-client-page.tsx", webRoot), "utf8");
+    assert.match(canvas, /const hasImageResult = Boolean\(task\.image_url \|\| task\.url\)/);
+    assert.match(canvas, /图片重试结果已写入画布/);
+    assert.match(canvas, /finishDiagnosticTask\(retryDiagnosticTaskId, "success", "图片重试结果已显示在画布中"\)/);
+    assert.match(canvas, /图片重试完成但没有返回结果/);
+});
+
 test("安全说明只用黄色强调标题并使用中性容器", async () => {
     const webRoot = new URL("../", import.meta.url);
     const modal = await readFile(new URL("src/components/layout/diagnostic-log-modal.tsx", webRoot), "utf8");

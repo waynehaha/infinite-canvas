@@ -596,9 +596,16 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     .then((task) => {
                         setNodes((prev) => applyCanvasImageTaskUpdate(prev, node.id, task, node.metadata?.startedAt || Date.now(), { width: node.width, height: node.height }));
                         appendDiagnosticEvent(diagnosticTaskId, { stage: "polling", status: "info", title: "图片任务状态已更新", detail: task.status || "处理中", data: { progressBucket: diagnosticProgressBucket(task.progress), remoteTaskId: task.id } });
-                        if (canvasTaskCompleted(task.status) || task.image_url || task.url) {
+                        if (canvasTaskFailed(task.status)) {
+                            const errorDetails = task.error?.message || "图片生成失败";
+                            appendDiagnosticEvent(diagnosticTaskId, { stage: "result", status: "failed", title: "图片任务生成失败", detail: errorDetails });
+                            finishDiagnosticTask(diagnosticTaskId, "failed", errorDetails);
+                        } else if (task.image_url || task.url) {
                             appendDiagnosticEvent(diagnosticTaskId, { stage: "canvas", status: "success", title: "图片结果已写入画布" });
                             finishDiagnosticTask(diagnosticTaskId, "success", "图片任务完成并已显示在画布中");
+                        } else if (canvasTaskCompleted(task.status)) {
+                            appendDiagnosticEvent(diagnosticTaskId, { stage: "result", status: "failed", title: "图片任务完成但没有返回结果", detail: "图片生成完成但没有返回图片地址" });
+                            finishDiagnosticTask(diagnosticTaskId, "failed", "图片生成完成但没有返回图片地址");
                         }
                     })
                     .catch((error) => appendDiagnosticEvent(diagnosticTaskId, { stage: "polling", status: "warning", title: "图片任务本次查询失败", detail: error instanceof Error ? error.message : "读取图片任务失败" }))
@@ -3689,8 +3696,11 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 const generationMetadata = savedImageMetadata?.generationType
                     ? { generationType: savedImageMetadata.generationType, model: generationConfig.model, channelId: generationConfig.imageChannelId || generationConfig.activeChannelId, size: generationConfig.size, quality: generationConfig.quality, count: savedImageMetadata.count || 1, references: savedImageMetadata.references }
                     : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryImages);
-                setNodes((prev) =>
-                    prev.map((item) =>
+                const hasImageResult = Boolean(task.image_url || task.url);
+                const completedWithoutResult = canvasTaskCompleted(task.status) && !hasImageResult;
+                const failedTask = canvasTaskFailed(task.status);
+                setNodes((prev) => {
+                    const prepared = prev.map((item) =>
                         item.id === node.id
                             ? {
                                 ...item,
@@ -3707,8 +3717,21 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                 },
                             }
                             : item,
-                    ),
-                );
+                    );
+                    if (!hasImageResult && !completedWithoutResult && !failedTask) return prepared;
+                    return applyCanvasImageTaskUpdate(prepared, node.id, task, retryStartedAt, { width: node.width, height: node.height });
+                });
+                if (failedTask) {
+                    const errorDetails = task.error?.message || "图片生成失败";
+                    appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "result", status: "failed", title: "图片重试失败", detail: errorDetails });
+                    finishDiagnosticTask(retryDiagnosticTaskId, "failed", errorDetails);
+                } else if (hasImageResult) {
+                    appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "canvas", status: "success", title: "图片重试结果已写入画布" });
+                    finishDiagnosticTask(retryDiagnosticTaskId, "success", "图片重试结果已显示在画布中");
+                } else if (completedWithoutResult) {
+                    appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "result", status: "failed", title: "图片重试完成但没有返回结果", detail: "图片生成完成但没有返回图片地址" });
+                    finishDiagnosticTask(retryDiagnosticTaskId, "failed", "图片生成完成但没有返回图片地址");
+                }
             } catch (error) {
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                 appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "request", status: "failed", title: "重试任务失败", detail: errorDetails });
