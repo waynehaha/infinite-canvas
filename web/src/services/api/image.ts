@@ -835,7 +835,17 @@ async function requestResponsesSingle(config: AiConfig, prompt: string, inputIma
 }
 
 async function requestAndParseImages(config: AiConfig, endpoint: string, requestBody: unknown, timeoutSeconds: number, fetchResponse: () => Promise<Response>, parseResponse: (response: Response) => Promise<ParsedImageResponse>, diagnosticTaskId?: string, diagnosticRequestBody: unknown = requestBody) {
-    appendDiagnosticEvent(diagnosticTaskId, { stage: "request", status: "info", title: "图片请求体已确认", data: { method: "POST", endpoint, request: createDiagnosticRequestSnapshot(diagnosticRequestBody) } });
+    appendDiagnosticEvent(diagnosticTaskId, {
+        stage: "request",
+        status: "info",
+        title: "图片请求体已确认",
+        data: {
+            method: "POST",
+            endpoint,
+            preparedReferenceImageCount: diagnosticRequestReferenceCount(diagnosticRequestBody),
+            request: createDiagnosticRequestSnapshot(diagnosticRequestBody),
+        },
+    });
     const startedAt = Date.now();
     let logged = false;
     try {
@@ -856,6 +866,20 @@ async function requestAndParseImages(config: AiConfig, endpoint: string, request
         }
         throw error;
     }
+}
+
+function diagnosticRequestReferenceCount(value: unknown) {
+    if (value instanceof FormData) return value.getAll("image").filter((item) => item instanceof File).length;
+    if (!value || typeof value !== "object") return 0;
+    const record = value as Record<string, unknown>;
+    if (Array.isArray(record.references)) return record.references.length;
+    const messages = Array.isArray(record.messages) ? record.messages : [];
+    return messages.reduce((count, message) => {
+        if (!message || typeof message !== "object") return count;
+        const content = (message as Record<string, unknown>).content;
+        if (!Array.isArray(content)) return count;
+        return count + content.filter((item) => item && typeof item === "object" && (item as Record<string, unknown>).type === "image_url").length;
+    }, 0);
 }
 
 async function requestImages(config: AiConfig & { seedIndex?: number; seedCount?: number }, prompt: string, references: ReferenceImage[], diagnosticTaskId?: string): Promise<GeneratedImage[]> {

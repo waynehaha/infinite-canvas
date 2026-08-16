@@ -60,7 +60,7 @@ import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { CANVAS_ASSET_DRAG_TYPE, CanvasSidePanel } from "../components/canvas-side-panel";
 import { resolveCanvasVideoImageReferences } from "../utils/canvas-generation-reference-policy";
 import { DEFAULT_CANVAS_AGENT_PANEL, DEFAULT_CANVAS_SIDE_PANEL, useCanvasStore } from "../stores/use-canvas-store";
-import { buildCanvasResourceReferences, buildNodeMentionReferences } from "../utils/canvas-resource-references";
+import { buildCanvasResourceReferences, buildNodeMentionReferences, getGenerationResourceNodes } from "../utils/canvas-resource-references";
 import { buildCanvasAgentContext } from "../agent/canvas-agent-context";
 import type { CanvasAgentAction, CanvasAgentToolResult } from "../agent/canvas-agent-tools";
 import {
@@ -2542,6 +2542,20 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
             const rawGenerationContext = buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt);
+            const generationInputs = buildNodeGenerationInputs(nodeId, nodesRef.current, connectionsRef.current);
+            const generationResources = getGenerationResourceNodes(nodeId, nodesRef.current, connectionsRef.current);
+            appendDiagnosticEvent(diagnosticTaskId, {
+                stage: "input",
+                status: "info",
+                title: "已分析画布参考素材来源",
+                data: {
+                    directConnectedNodes: nodesRef.current
+                        .filter((item) => connectionsRef.current.some((connection) => connection.toNodeId === nodeId && connection.fromNodeId === item.id))
+                        .map(diagnosticCanvasNodeSummary),
+                    resolvedResourceNodeIds: generationResources.map((item) => item.id),
+                    recognizedInputs: generationInputs.map(diagnosticGenerationInputSummary),
+                },
+            });
             const diagnosticReferences = diagnosticReferencesFromContext(rawGenerationContext, mode);
             updateDiagnosticReferences(diagnosticTaskId, diagnosticReferences);
             void registerDiagnosticReferenceAssets(diagnosticTaskId, diagnosticReferenceAssetsFromContext(rawGenerationContext, mode));
@@ -2555,15 +2569,31 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     referenceAudios: rawGenerationContext.referenceAudios.length,
                     hasFirstFrame: Boolean(rawGenerationContext.firstFrame),
                     hasLastFrame: Boolean(rawGenerationContext.lastFrame),
+                    recognizedImageInputs: generationInputs.filter((input) => input.type === "image").length,
                 },
+            });
+            appendDiagnosticEvent(diagnosticTaskId, {
+                stage: "reference",
+                status: "started",
+                title: "开始读取参考素材",
+                data: { candidateCount: diagnosticReferences.reduce((sum, item) => sum + item.count, 0), references: diagnosticReferences },
             });
             let generationContext: NodeGenerationContext;
             try {
                 generationContext = await hydrateNodeGenerationContext(rawGenerationContext);
-                appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "success", title: diagnosticReferences.length ? "参考素材已成功读取" : "本次提交没有参考素材", data: { references: diagnosticReferences } });
+                appendDiagnosticEvent(diagnosticTaskId, {
+                    stage: "reference",
+                    status: "success",
+                    title: diagnosticReferences.length ? "参考素材已成功读取" : "本次提交没有参考素材",
+                    data: {
+                        references: diagnosticReferences,
+                        hydratedImageCount: generationContext.referenceImages.length,
+                        hydratedFrameCount: Number(Boolean(generationContext.firstFrame)) + Number(Boolean(generationContext.lastFrame)),
+                    },
+                });
             } catch (error) {
                 const errorDetails = error instanceof Error ? error.message : "参考素材读取失败";
-                appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "failed", title: "参考素材读取失败", detail: errorDetails });
+                appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "failed", title: "参考素材读取失败", detail: errorDetails, data: { candidateCount: generationInputs.length, references: diagnosticReferences } });
                 finishDiagnosticTask(diagnosticTaskId, "failed", errorDetails);
                 message.error(errorDetails);
                 setRunningNodeId(null);
@@ -3595,9 +3625,31 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     audioCount: 0,
                 };
             const retryReferences = diagnosticReferencesFromContext(retryDiagnosticContext, retryMode);
+            const retryResources = getGenerationResourceNodes(sourceNode.id, nodesRef.current, connectionsRef.current);
+            appendDiagnosticEvent(retryDiagnosticTaskId, {
+                stage: "input",
+                status: "info",
+                title: "已分析重试参考素材来源",
+                data: {
+                    directConnectedNodes: nodesRef.current
+                        .filter((item) => connectionsRef.current.some((connection) => connection.toNodeId === sourceNode.id && connection.fromNodeId === item.id))
+                        .map(diagnosticCanvasNodeSummary),
+                    resolvedResourceNodeIds: retryResources.map((item) => item.id),
+                    savedMetadataReferenceCount: savedImageMetadata?.references?.length || 0,
+                },
+            });
             updateDiagnosticReferences(retryDiagnosticTaskId, retryReferences);
             void registerDiagnosticReferenceAssets(retryDiagnosticTaskId, diagnosticReferenceAssetsFromContext(retryDiagnosticContext, retryMode));
-            appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "reference", status: "success", title: retryReferences.length ? "重试所需参考素材已读取" : "本次重试没有参考素材", data: { references: retryReferences } });
+            appendDiagnosticEvent(retryDiagnosticTaskId, {
+                stage: "reference",
+                status: "success",
+                title: retryReferences.length ? "重试所需参考素材已读取" : "本次重试没有参考素材",
+                data: {
+                    references: retryReferences,
+                    hydratedImageCount: retryImages.length,
+                    savedMetadataReferenceCount: savedImageMetadata?.references?.length || 0,
+                },
+            });
 
             const videoGenerationConfig = node.type === CanvasNodeType.Video ? (context ? withCanvasVideoAdvancedConfig(generationConfig, context) : generationConfig) : null;
             if (videoGenerationConfig && !(await confirmVideoPromptLength(videoGenerationConfig.model, requestPrompt))) {
@@ -5043,6 +5095,37 @@ function diagnosticReferencesFromContext(context: NodeGenerationContext, mode: D
         diagnosticReferenceSummary("last-frame", context.lastFrame ? [context.lastFrame] : [], includesVideoMaterials),
     ];
     return result.filter((item): item is DiagnosticReferenceSummary => Boolean(item));
+}
+
+function diagnosticCanvasNodeSummary(node: CanvasNodeData) {
+    const content = node.metadata?.content || "";
+    return {
+        nodeId: node.id,
+        type: node.type,
+        title: node.title,
+        hasContent: Boolean(content),
+        contentKind: content.startsWith("data:") ? "data-url" : content ? "url-or-storage" : "none",
+        storageKeyPresent: Boolean(node.metadata?.storageKey),
+        mimeType: node.metadata?.mimeType,
+        bytes: node.metadata?.bytes,
+        width: node.metadata?.naturalWidth,
+        height: node.metadata?.naturalHeight,
+    };
+}
+
+function diagnosticGenerationInputSummary(input: NodeGenerationInput) {
+    const media = input.image || input.video || input.audio;
+    return {
+        nodeId: input.nodeId,
+        type: input.type,
+        title: input.title,
+        hasContent: Boolean(media),
+        storageKeyPresent: Boolean(media && "storageKey" in media && media.storageKey),
+        mimeType: media && "type" in media ? media.type : undefined,
+        bytes: media && "bytes" in media ? media.bytes : undefined,
+        width: media && "width" in media ? media.width : undefined,
+        height: media && "height" in media ? media.height : undefined,
+    };
 }
 
 function diagnosticReferenceAssetsFromContext(context: NodeGenerationContext, mode: DiagnosticMode): DiagnosticReferenceAsset[] {

@@ -62,6 +62,20 @@ test("参考图诊断记录尺寸并区分本地原文件与公网链接", async
     assert.match(service, /getImageBlob/);
 });
 
+test("画布诊断记录参考素材来源、读取结果和实际请求数量", async () => {
+    const webRoot = new URL("../", import.meta.url);
+    const canvas = await readFile(new URL("src/app/(user)/canvas/[id]/canvas-client-page.tsx", webRoot), "utf8");
+    const imageService = await readFile(new URL("src/services/api/image.ts", webRoot), "utf8");
+    assert.match(canvas, /已分析画布参考素材来源/);
+    assert.match(canvas, /directConnectedNodes/);
+    assert.match(canvas, /resolvedResourceNodeIds/);
+    assert.match(canvas, /recognizedInputs/);
+    assert.match(canvas, /hydratedImageCount/);
+    assert.match(canvas, /参考素材读取失败/);
+    assert.match(imageService, /preparedReferenceImageCount/);
+    assert.match(imageService, /diagnosticRequestReferenceCount/);
+});
+
 test("公网参考图链接保留普通参数并隐藏鉴权参数", () => {
     const sanitized = sanitizeDiagnosticReferenceUrl("https://cdn.example.com/reference.png?w=1600&signature=private-signature&token=secret-token#preview");
     assert.match(sanitized, /w=1600/);
