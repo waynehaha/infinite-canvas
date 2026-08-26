@@ -210,6 +210,38 @@ test("Seedance 首尾帧必须成对且不能混用其他素材", () => {
     );
 });
 
+test("Seedance 单图搭配参考视频时使用普通参考图字段", () => {
+    assert.deepEqual(
+        createAIHubVideoBody(
+            videoInput({
+                model: "Doubao-Seedance-2.0-480p",
+                references: ["https://cdn.example.com/model.png"],
+                videoReferences: ["https://cdn.example.com/dance.mp4"],
+            }),
+        ),
+        {
+            model: "Doubao-Seedance-2.0-480p",
+            prompt: "生成视频",
+            seconds: "6",
+            aspect_ratio: "16:9",
+            reference_images: ["https://cdn.example.com/model.png"],
+            reference_videos: ["https://cdn.example.com/dance.mp4"],
+        },
+    );
+});
+
+test("Seedance 仅使用单图时保留图生视频字段", () => {
+    const body = createAIHubVideoBody(videoInput({ model: "Doubao-Seedance-2.0-480p", references: ["https://cdn.example.com/model.png"] }));
+    assert.equal(body.image_url, "https://cdn.example.com/model.png");
+    assert.equal("reference_images" in body, false);
+});
+
+test("Seedance 单图搭配参考音频时使用普通参考图字段", () => {
+    const body = createAIHubVideoBody(videoInput({ model: "Doubao-Seedance-2.0-480p", references: ["https://cdn.example.com/model.png"], audioReferences: ["https://cdn.example.com/music.mp3"] }));
+    assert.deepEqual(body.reference_images, ["https://cdn.example.com/model.png"]);
+    assert.equal("image_url" in body, false);
+});
+
 test("Doubao Seedance 时长由请求配置转换为字符串", () => {
     const body = createAIHubVideoBody(videoInput({ model: "Doubao-Seedance-2.0-mini-480p", seconds: "4" }));
     assert.equal(body.seconds, "4");

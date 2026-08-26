@@ -69,8 +69,14 @@ test("在线配置可以修改请求字段类型且拒绝不安全协议", () =>
 test("在线配置支持条件字段、嵌套进度和未知进度", () => {
     const profile = buildBuiltInAIHubModelCatalog().requestProfiles["seedance-2.0-direct"];
     const body = buildAIHubConfiguredRequestBody(profile, { model: "demo", prompt: "test", seconds: 4, aspectRatio: "16:9", references: ["https://example.com/a.png"] });
+    const videoBody = buildAIHubConfiguredRequestBody(profile, { model: "demo", prompt: "test", seconds: 4, aspectRatio: "16:9", references: ["https://example.com/a.png"], videoReferences: ["https://example.com/a.mp4"] });
+    const audioBody = buildAIHubConfiguredRequestBody(profile, { model: "demo", prompt: "test", seconds: 4, aspectRatio: "16:9", references: ["https://example.com/a.png"], audioReferences: ["https://example.com/a.mp3"] });
     assert.equal(body.seconds, "4");
     assert.equal(body.image_url, "https://example.com/a.png");
+    assert.deepEqual(videoBody.reference_images, ["https://example.com/a.png"]);
+    assert.equal("image_url" in videoBody, false);
+    assert.deepEqual(audioBody.reference_images, ["https://example.com/a.png"]);
+    assert.equal("image_url" in audioBody, false);
     assert.equal(readAIHubTaskProgress(profile.task, { data: { progress: 0 } }, "processing"), undefined);
     assert.equal(readAIHubTaskProgress(profile.task, { data: { progress: 37 } }, "processing"), 37);
     assert.equal(readAIHubTaskProgress(profile.task, { progress: 0 }, "completed"), 100);

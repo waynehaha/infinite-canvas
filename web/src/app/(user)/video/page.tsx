@@ -2767,6 +2767,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         error: log.error,
         errorDetail: log.errorDetail,
         lastPolledAt: log.lastPolledAt,
+        diagnosticTaskId: log.diagnosticTaskId,
     };
 }
 

@@ -127,6 +127,7 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
         assertMediaLimit("参考音频", capability?.references?.audios, input.audioReferences);
         if (input.audioReferences.length && !input.references.length && !input.videoReferences.length) throw new Error("Seedance 参考音频需要同时提供参考图或参考视频");
         const official = normalizedModel.startsWith("official-seedance-");
+        const hasMultimodalReferences = Boolean(input.videoReferences.length || input.audioReferences.length);
         if (official) assertPublicUrls("官方 Seedance 参考素材", [...input.references, ...input.videoReferences, ...input.audioReferences, ...(input.firstFrame ? [input.firstFrame] : []), ...(input.lastFrame ? [input.lastFrame] : [])] as string[]);
         return {
             model: input.model,
@@ -135,8 +136,8 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
             aspect_ratio: aspectRatio,
             ...(input.firstFrame ? { first_image_url: input.firstFrame } : {}),
             ...(input.lastFrame ? { last_image_url: input.lastFrame } : {}),
-            ...(!hasFrames && input.references.length === 1 ? { image_url: input.references[0] } : {}),
-            ...(!hasFrames && input.references.length > 1 ? { reference_images: input.references } : {}),
+            ...(!hasFrames && input.references.length === 1 && !hasMultimodalReferences ? { image_url: input.references[0] } : {}),
+            ...(!hasFrames && input.references.length && (input.references.length > 1 || hasMultimodalReferences) ? { reference_images: input.references } : {}),
             ...(input.videoReferences.length ? { reference_videos: input.videoReferences } : {}),
             ...(input.audioReferences.length ? { reference_audios: input.audioReferences } : {}),
         };

@@ -94,6 +94,7 @@ test("生图与视频工作台在结果标题旁接入独立诊断范围", async
     assert.match(videoPage, /scopeType: "video-workbench"/);
     assert.match(imagePage, /diagnosticTaskId: pendingLog\.diagnosticTaskId/);
     assert.match(videoPage, /diagnosticTaskId: pendingLog\.diagnosticTaskId/);
+    assert.match(videoPage, /diagnosticTaskId: log\.diagnosticTaskId/);
     assert.match(diagnosticService, /diagnosticTaskScope\(task\)\.id === scopeId/);
 });
 
