@@ -3,10 +3,10 @@ import { AIHUB_BASE_URL } from "@/lib/aihub-models";
 import { parseAIHubServiceConfig, serviceConfigCatalog, type AIHubServiceConfig } from "@/lib/aihub-service-config";
 import { buildApiUrl, normalizeLocalChannels, type AiConfig } from "@/stores/use-config-store";
 
-export const AIHUB_REMOTE_BOOTSTRAP_URL = "https://aihubcc-config.pages.dev/infinite-canvas/bootstrap.json";
+export const AIHUB_REMOTE_MANIFEST_URL = "https://aihubcc-config.pages.dev/v1/model-catalog/manifest.json";
 export const AIHUB_REMOTE_CONFIG_STATUS_KEY = "infinite-canvas:aihub-remote-config-status";
 export const AIHUB_REMOTE_CONFIG_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
-const CONFIG_PROTOCOL_VERSION = 1;
+const CONFIG_PROTOCOL_VERSION = 2;
 
 export type AIHubRemoteConfigStatus = {
     checkedAt: string;
@@ -16,37 +16,37 @@ export type AIHubRemoteConfigStatus = {
     message: string;
 };
 
-type AIHubRemoteBootstrap = {
+type AIHubRemoteManifest = {
     schemaVersion: 1;
-    configId: "infinite-canvas-bootstrap";
+    configId: "aihub-model-catalog-manifest";
     version: string;
     publishedAt: string;
-    serviceConfigUrl: string;
-    serviceConfigSha256: string;
+    catalogUrl: string;
+    catalogSha256: string;
     minConfigProtocol: number;
 };
 
 export async function fetchAIHubRemoteServiceConfig(force = false) {
-    const bootstrap = await fetchJson(AIHUB_REMOTE_BOOTSTRAP_URL, force);
-    const parsedBootstrap = validateBootstrap(bootstrap);
-    if (parsedBootstrap.minConfigProtocol > CONFIG_PROTOCOL_VERSION) {
-        const status = saveStatus({ checkedAt: new Date().toISOString(), version: parsedBootstrap.version, state: "unsupported", message: "在线模型配置需要更新客户端后才能使用" });
+    const manifest = await fetchJson(AIHUB_REMOTE_MANIFEST_URL, force);
+    const parsedManifest = validateManifest(manifest);
+    if (parsedManifest.minConfigProtocol > CONFIG_PROTOCOL_VERSION) {
+        const status = saveStatus({ checkedAt: new Date().toISOString(), version: parsedManifest.version, state: "unsupported", message: "在线模型配置需要更新客户端后才能使用" });
         return { config: null, status };
     }
-    assertTrustedConfigUrl(parsedBootstrap.serviceConfigUrl);
-    const configText = await fetchText(parsedBootstrap.serviceConfigUrl, force);
+    assertTrustedConfigUrl(parsedManifest.catalogUrl);
+    const configText = await fetchText(parsedManifest.catalogUrl, force);
     const digest = await sha256(configText);
-    if (digest !== parsedBootstrap.serviceConfigSha256.toLowerCase()) throw new Error("在线模型配置校验失败");
+    if (digest !== parsedManifest.catalogSha256.toLowerCase()) throw new Error("在线模型配置校验失败");
     const config = parseAIHubServiceConfig(configText);
     if (config.service.baseUrl !== AIHUB_BASE_URL) throw new Error("在线模型配置包含非预期的 AIHub 服务地址");
     const previous = readAIHubRemoteConfigStatus();
-    const changed = previous?.version !== parsedBootstrap.version;
+    const changed = previous?.version !== parsedManifest.version;
     const status = saveStatus({
         checkedAt: new Date().toISOString(),
         updatedAt: config.updatedAt,
-        version: parsedBootstrap.version,
+        version: parsedManifest.version,
         state: changed ? "updated" : "current",
-        message: changed ? `已自动更新到 ${parsedBootstrap.version}` : `模型配置已是最新版本 ${parsedBootstrap.version}`,
+        message: changed ? `已自动更新到 ${parsedManifest.version}` : `模型配置已是最新版本 ${parsedManifest.version}`,
     });
     return { config, status };
 }
@@ -115,17 +115,17 @@ export function saveAIHubRemoteConfigFailure(error: unknown) {
     return saveStatus({ checkedAt: new Date().toISOString(), state: offline ? "offline" : "invalid", message: offline ? "暂时无法连接模型配置中心，已继续使用本地配置" : error instanceof Error ? error.message : "在线模型配置无效，已继续使用本地配置" });
 }
 
-function validateBootstrap(value: unknown): AIHubRemoteBootstrap {
-    if (!isRecord(value) || value.schemaVersion !== 1 || value.configId !== "infinite-canvas-bootstrap") throw new Error("在线模型配置入口无效");
-    for (const key of ["version", "publishedAt", "serviceConfigUrl", "serviceConfigSha256"] as const) if (typeof value[key] !== "string" || !value[key]) throw new Error("在线模型配置入口信息不完整");
+function validateManifest(value: unknown): AIHubRemoteManifest {
+    if (!isRecord(value) || value.schemaVersion !== 1 || value.configId !== "aihub-model-catalog-manifest") throw new Error("在线模型配置入口无效");
+    for (const key of ["version", "publishedAt", "catalogUrl", "catalogSha256"] as const) if (typeof value[key] !== "string" || !value[key]) throw new Error("在线模型配置入口信息不完整");
     if (typeof value.minConfigProtocol !== "number" || !Number.isInteger(value.minConfigProtocol) || value.minConfigProtocol < 1) throw new Error("在线模型配置协议无效");
-    if (!/^[a-f0-9]{64}$/i.test(value.serviceConfigSha256)) throw new Error("在线模型配置校验值无效");
-    return value as AIHubRemoteBootstrap;
+    if (!/^[a-f0-9]{64}$/i.test(value.catalogSha256)) throw new Error("在线模型配置校验值无效");
+    return value as AIHubRemoteManifest;
 }
 
 function assertTrustedConfigUrl(value: string) {
     const url = new URL(value);
-    if (url.protocol !== "https:" || url.hostname !== "aihubcc-config.pages.dev" || !url.pathname.startsWith("/infinite-canvas/versions/")) throw new Error("在线模型配置地址不可信");
+    if (url.protocol !== "https:" || url.hostname !== "aihubcc-config.pages.dev" || !url.pathname.startsWith("/v1/model-catalog/versions/")) throw new Error("在线模型配置地址不可信");
 }
 
 async function fetchJson(url: string, force: boolean) {

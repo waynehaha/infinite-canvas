@@ -17,6 +17,7 @@ import { appendDiagnosticEvent } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { resolveAIHubReferenceUrl } from "@/services/api/aihub/media";
+import { getAIHubRequestProfile, readAIHubProtocolValue, renderAIHubTaskEndpoint } from "@/lib/aihub-request-profile";
 
 export type VideoResponse = {
     id: string;
@@ -82,6 +83,8 @@ function aiApiUrl(config: AiConfig, path: string) {
 }
 
 function aiVideoPollUrl(config: AiConfig, model: string, id: string) {
+    const configuredEndpoint = getAIHubRequestProfile(model)?.task?.pollEndpoint;
+    if (isAIHubConfig({ ...config, model, videoModel: model }) && configuredEndpoint) return aiApiUrl(config, renderAIHubTaskEndpoint(configuredEndpoint, id));
     if (!isAgnesVideoModel(model) || !id.startsWith("video_")) {
         return aiApiUrl(config, `/videos/${encodeURIComponent(id)}`);
     }
@@ -135,6 +138,7 @@ export async function requestVideoGeneration(
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] | VideoReferenceInput = [], onProgress?: VideoProgressHandler, options?: string | VideoTaskCreateOptions): Promise<CreatedVideoGenerationTask> {
     const model = config.model || config.videoModel;
+    const endpoint = isAIHubConfig({ ...config, model, videoModel: model }) ? getAIHubRequestProfile(model)?.endpoint || "/videos" : "/videos";
     const systemPrompt = (config.systemPrompts.video || config.systemPrompt).trim();
     const createOptions = normalizeVideoTaskCreateOptions(options);
     const body = await createVideoRequestBody(config, model, systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt, normalizeVideoReferenceInput(references));
@@ -150,7 +154,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         status: parameterCheck.mismatches.length ? "warning" : "info",
         title: "视频请求已组装",
         detail: parameterCheck.mismatches.length ? `发现 ${parameterCheck.mismatches.length} 项参数不一致` : undefined,
-        data: { method: "POST", endpoint: "/videos", parameterCheck, request: requestSnapshot },
+        data: { method: "POST", endpoint, parameterCheck, request: requestSnapshot },
     });
     const startedAt = Date.now();
     try {
@@ -161,14 +165,14 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             ...(accountProxy && createOptions.source ? { "X-Video-Task-Source": createOptions.source } : {}),
             ...(accountProxy && createOptions.sourceId ? { "X-Video-Task-Source-ID": createOptions.sourceId } : {}),
         };
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers })).data);
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, endpoint), body, { headers })).data, model);
         appendDiagnosticEvent(createOptions.diagnosticTaskId, {
             stage: "request",
             status: "success",
             title: "视频请求提交成功",
-            data: { endpoint: "/videos", httpStatus: 200, durationMs: Date.now() - startedAt, remoteTaskId: created.id || created.task_id || created.video_id || "", remoteStatus: created.status || "queued" },
+            data: { endpoint, httpStatus: 200, durationMs: Date.now() - startedAt, remoteTaskId: videoPollId(model, created), remoteStatus: created.status || "queued" },
         });
-        if (!created.id && !created.video_id) throw new Error("视频接口没有返回任务 ID");
+        if (!videoPollId(model, created)) throw new Error("视频接口没有返回任务 ID");
         if (typeof created.progress === "number") onProgress?.(created.progress, created);
         return { task: created, pollId: videoPollId(model, created), startedAt, requestBody: body };
     } catch (error) {
@@ -178,9 +182,9 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             status: "failed",
             title: "视频请求提交失败",
             detail: message,
-            data: { endpoint: "/videos", httpStatus: axios.isAxiosError(error) ? error.response?.status || 0 : 0, durationMs: Date.now() - startedAt },
+            data: { endpoint, httpStatus: axios.isAxiosError(error) ? error.response?.status || 0 : 0, durationMs: Date.now() - startedAt },
         });
-        void writeVideoAICallLog(config, model, "/videos", "POST", startedAt, axios.isAxiosError(error) ? error.response?.status || 0 : 0, stringifyLogPayload(summarizeVideoRequestBody(body)), stringifyLogPayload(detail), message);
+        void writeVideoAICallLog(config, model, endpoint, "POST", startedAt, axios.isAxiosError(error) ? error.response?.status || 0 : 0, stringifyLogPayload(summarizeVideoRequestBody(body)), stringifyLogPayload(detail), message);
         throw new VideoRequestError(message, detail);
     }
 }
@@ -201,11 +205,11 @@ export async function pollCreatedVideoGenerationTask(
     try {
         if (initialDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, initialDelayMs));
         for (;;) {
-            const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data);
+            const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data, model);
             onPoll?.(video);
-            if (isFailedVideoStatus(video.status)) throw new VideoRequestError(aiHubVideoFailureMessage(model, video.error?.message || "视频生成失败"), video);
+            if (isFailedVideoStatus(video.status, model)) throw new VideoRequestError(aiHubVideoFailureMessage(model, video.error?.message || "视频生成失败"), video);
             if (typeof video.progress === "number") onProgress?.(video.progress, video);
-            if (isCompletedVideoStatus(video.status) || video.video_url || video.url) {
+            if (isCompletedVideoStatus(video.status, model) || video.video_url || video.url) {
                 completed = video;
                 break;
             }
@@ -240,12 +244,12 @@ export async function pollVideoGenerationTaskStatus(config: AiConfig, task: Vide
     const pollId = videoPollId(model, task);
     if (!pollId) throw new VideoRequestError("视频接口没有返回任务 ID", task);
     try {
-        let video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data);
-        if (isAIHubConfig(config) && isFailedVideoStatus(video.status) && video.error?.message) {
+        let video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiVideoPollUrl(config, model, pollId), { headers: aiHeaders(config), params: usesAccountProxy(config) ? { model } : undefined })).data, model);
+        if (isAIHubConfig(config) && isFailedVideoStatus(video.status, model) && video.error?.message) {
             video = { ...video, error: { ...video.error, message: aiHubVideoFailureMessage(model, video.error.message) } };
         }
         onStatus?.(video);
-        return isCompletedVideoStatus(video.status) || video.video_url || video.url ? materializeAIHubVideoTask(config, video, pollId) : video;
+        return isCompletedVideoStatus(video.status, model) || video.video_url || video.url ? materializeAIHubVideoTask(config, video, pollId) : video;
     } catch (error) {
         throw toVideoPollingError(error);
     }
@@ -283,7 +287,7 @@ export async function listVideoGenerationTasks(config: AiConfig) {
     if (!usesAccountProxy(config)) return [];
     const payload = (await axios.get<ApiVideoEnvelope>("/api/v1/video-tasks", { headers: aiHeaders(config) })).data;
     if (payload.code !== 0) throw new VideoRequestError(payload.msg || payload.message || "读取视频任务失败", payload);
-    return Array.isArray(payload.data) ? payload.data.map(normalizeVideoResponse) : [];
+    return Array.isArray(payload.data) ? payload.data.map((item) => normalizeVideoResponse(item)) : [];
 }
 
 export async function deleteVideoGenerationTask(config: AiConfig, task?: VideoResponse | null) {
@@ -666,17 +670,17 @@ function normalizeVideoResolution(value: string) {
     return /k$/i.test(resolution) ? resolution.toLowerCase() : `${resolution}p`;
 }
 
-function unwrapVideoResponse(payload: ApiVideoResponse): VideoResponse {
+function unwrapVideoResponse(payload: ApiVideoResponse, model?: string): VideoResponse {
     if (!payload) throw new Error("接口没有返回视频任务");
     if (isVideoEnvelope(payload)) {
         if (payload.code !== 0) throw new VideoRequestError(payload.msg || payload.message || "请求失败", payload);
         if (!payload.data || Array.isArray(payload.data)) throw new Error("接口没有返回视频任务");
-        return normalizeVideoResponse(payload.data);
+        return normalizeVideoResponse(payload.data, model);
     }
     const error = videoPayloadErrorMessage(payload);
     if (error) throw new VideoRequestError(error, payload);
     if (payload.error?.message) throw new VideoRequestError(payload.error.message, payload);
-    return normalizeVideoResponse(payload);
+    return normalizeVideoResponse(payload, model);
 }
 
 function isVideoEnvelope(payload: ApiVideoResponse): payload is ApiVideoEnvelope {
@@ -783,9 +787,14 @@ function looksLikeBase64(value: string) {
     return /^[A-Za-z0-9+/=]+$/.test(value.slice(0, 200));
 }
 
-function normalizeVideoResponse(value: unknown): VideoResponse {
+function normalizeVideoResponse(value: unknown, model?: string): VideoResponse {
     const record = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-    const id = firstString(record.id, record.request_id, record.task_id, record.video_id, firstTaskId(record));
+    const task = model ? getAIHubRequestProfile(model)?.task : undefined;
+    const configuredId = task ? readAIHubProtocolValue(record, task.idFields) : undefined;
+    const configuredStatus = task ? readAIHubProtocolValue(record, task.statusFields) : undefined;
+    const configuredUrl = task ? readAIHubProtocolValue(record, task.resultUrlFields) : undefined;
+    const configuredError = task ? readAIHubProtocolValue(record, task.errorFields) : undefined;
+    const id = firstString(configuredId, record.id, record.request_id, record.task_id, record.video_id, firstTaskId(record));
     return {
         ...(record as VideoResponse),
         id,
@@ -796,8 +805,9 @@ function normalizeVideoResponse(value: unknown): VideoResponse {
         channelId: firstString(record.channelId, record.channel_id),
         userChannelId: firstString(record.userChannelId, record.user_channel_id),
         channelName: firstString(record.channelName, record.channel_name),
-        status: firstString(record.status, record.state),
-        video_url: firstString(record.video_url, record.videoUrl, record.remixed_from_video_id, record.output_url, record.download_url, firstVideoUrl(record)),
+        status: firstString(configuredStatus, record.status, record.state),
+        video_url: firstString(configuredUrl, record.video_url, record.videoUrl, record.remixed_from_video_id, record.output_url, record.download_url, firstVideoUrl(record)),
+        error: configuredError ? { message: String(configuredError) } : (record.error as { message?: string } | undefined),
         progress: typeof record.progress === "number" ? record.progress : typeof record.progress === "string" ? parseFloat(record.progress) : undefined,
     };
 }
@@ -816,12 +826,14 @@ function firstString(...values: unknown[]) {
     return values.find((value): value is string => typeof value === "string" && !!value.trim())?.trim() || "";
 }
 
-function isCompletedVideoStatus(status?: string) {
-    return ["completed", "complete", "done", "succeeded", "success"].includes((status || "").toLowerCase());
+function isCompletedVideoStatus(status?: string, model?: string) {
+    const statuses = model ? getAIHubRequestProfile(model)?.task?.completedStatuses : undefined;
+    return (statuses || ["completed", "complete", "done", "succeeded", "success"]).includes((status || "").toLowerCase());
 }
 
-function isFailedVideoStatus(status?: string) {
-    return ["failed", "fail", "error", "cancelled", "canceled"].includes((status || "").toLowerCase());
+function isFailedVideoStatus(status?: string, model?: string) {
+    const statuses = model ? getAIHubRequestProfile(model)?.task?.failedStatuses : undefined;
+    return (statuses || ["failed", "fail", "error", "cancelled", "canceled"]).includes((status || "").toLowerCase());
 }
 
 function videoPayloadErrorMessage(value: unknown): string {

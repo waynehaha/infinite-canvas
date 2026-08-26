@@ -10,11 +10,11 @@ registerHooks({
 });
 
 const { buildBuiltInAIHubServiceConfig } = await import("../src/lib/aihub-service-config.ts");
-const { applyAIHubRemoteServiceConfig, AIHUB_REMOTE_BOOTSTRAP_URL } = await import("../src/lib/aihub-remote-config.ts");
+const { applyAIHubRemoteServiceConfig, AIHUB_REMOTE_MANIFEST_URL } = await import("../src/lib/aihub-remote-config.ts");
 const { defaultConfig } = await import("../src/stores/use-config-store.ts");
 
-test("远程配置使用独立 AIHubCC Pages 固定入口", () => {
-    assert.equal(AIHUB_REMOTE_BOOTSTRAP_URL, "https://aihubcc-config.pages.dev/infinite-canvas/bootstrap.json");
+test("远程配置使用产品无关的 AIHubCC 模型目录入口", () => {
+    assert.equal(AIHUB_REMOTE_MANIFEST_URL, "https://aihubcc-config.pages.dev/v1/model-catalog/manifest.json");
 });
 
 test("远程配置按用户 Key 可见模型筛选并保留有效选择", () => {

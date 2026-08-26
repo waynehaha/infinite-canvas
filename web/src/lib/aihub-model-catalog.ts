@@ -1,5 +1,6 @@
 import { AIHUB_DEFAULT_MODELS, aihubModelAdapter, setAIHubRuntimeModelCatalog, clearAIHubRuntimeModelCatalog, type AIHubModelAdapter, type AIHubModelCapability } from "@/lib/aihub-models";
 import { clearAIHubRuntimeCapabilities, getAIHubModelCapability, setAIHubRuntimeCapabilities, type AIHubCapabilityStatus, type AIHubModelCapability as AIHubCapability } from "@/lib/aihub-model-capabilities";
+import { AIHUB_BUILT_IN_REQUEST_PROFILE_ASSIGNMENTS, AIHUB_BUILT_IN_REQUEST_PROFILES, clearAIHubRuntimeRequestProfiles, setAIHubRuntimeRequestProfiles, type AIHubRequestField, type AIHubRequestProfile, type AIHubTaskProtocol } from "@/lib/aihub-request-profile";
 
 export const AIHUB_MODEL_CATALOG_SCHEMA_VERSION = 1;
 export const AIHUB_MODEL_CATALOG_STORAGE_KEY = "infinite-canvas:aihub-model-catalog";
@@ -9,6 +10,7 @@ export type AIHubModelCatalogEntry = {
     kind: AIHubModelCapability;
     enabled: boolean;
     adapter: AIHubModelAdapter;
+    requestProfile?: string;
     capability?: AIHubCapability;
     displayName?: string;
     description?: string;
@@ -20,6 +22,7 @@ export type AIHubModelCatalog = {
     catalogId: "aihub-model-catalog";
     updatedAt: string;
     source: string;
+    requestProfiles: Record<string, AIHubRequestProfile>;
     models: AIHubModelCatalogEntry[];
 };
 
@@ -36,10 +39,12 @@ export function buildBuiltInAIHubModelCatalog(): AIHubModelCatalog {
         catalogId: "aihub-model-catalog",
         updatedAt: "2026-08-25T00:00:00.000Z",
         source: "https://aihubcc.cc/pricing",
+        requestProfiles: AIHUB_BUILT_IN_REQUEST_PROFILES,
         models: AIHUB_DEFAULT_MODELS.map((model) => {
             const capability = getAIHubModelCapability(model);
             const kind = (capability?.kind || inferKind(model)) as AIHubModelCapability;
-            return { model, kind, enabled: true, adapter: aihubModelAdapter(model) || defaultAdapter(kind), ...(capability ? { capability, description: capability.fixedSummary.join(" · ") } : {}), documentationUrl: documentationUrl(model) };
+            const requestProfile = AIHUB_BUILT_IN_REQUEST_PROFILE_ASSIGNMENTS[model.toLowerCase()];
+            return { model, kind, enabled: true, adapter: aihubModelAdapter(model) || defaultAdapter(kind), ...(requestProfile ? { requestProfile } : {}), ...(capability ? { capability, description: capability.fixedSummary.join(" · ") } : {}), documentationUrl: documentationUrl(model) };
         }),
     };
 }
@@ -59,6 +64,7 @@ export function parseAIHubModelCatalog(text: string): AIHubModelCatalog {
 export function applyAIHubModelCatalog(catalog: AIHubModelCatalog, persist = true) {
     setAIHubRuntimeCapabilities(catalog.models.flatMap((entry) => (entry.capability ? [entry.capability] : [])));
     setAIHubRuntimeModelCatalog(catalog.models.map(({ model, kind, adapter }) => ({ model, kind, adapter })));
+    setAIHubRuntimeRequestProfiles(catalog.requestProfiles, catalog.models);
     if (persist && typeof window !== "undefined") window.localStorage.setItem(AIHUB_MODEL_CATALOG_STORAGE_KEY, JSON.stringify(catalog));
 }
 
@@ -79,6 +85,7 @@ export function loadPersistedAIHubModelCatalog() {
 export function clearPersistedAIHubModelCatalog() {
     clearAIHubRuntimeCapabilities();
     clearAIHubRuntimeModelCatalog();
+    clearAIHubRuntimeRequestProfiles();
     if (typeof window !== "undefined") window.localStorage.removeItem(AIHUB_MODEL_CATALOG_STORAGE_KEY);
 }
 
@@ -95,11 +102,12 @@ function validateCatalog(value: unknown): AIHubModelCatalog {
     if (value.source && !/^https:\/\//i.test(value.source)) throw new Error("模型配置来源必须是 HTTPS 地址");
     if (!Array.isArray(value.models) || !value.models.length || value.models.length > 200) throw new Error("模型配置数量必须在 1–200 个之间");
     const names = new Set<string>();
-    const models = value.models.map((entry) => validateEntry(entry, names));
-    return { schemaVersion: AIHUB_MODEL_CATALOG_SCHEMA_VERSION, catalogId: "aihub-model-catalog", updatedAt: value.updatedAt, source: value.source, models };
+    const requestProfiles = validateRequestProfiles(value.requestProfiles);
+    const models = value.models.map((entry) => validateEntry(entry, names, requestProfiles));
+    return { schemaVersion: AIHUB_MODEL_CATALOG_SCHEMA_VERSION, catalogId: "aihub-model-catalog", updatedAt: value.updatedAt, source: value.source, requestProfiles, models };
 }
 
-function validateEntry(value: unknown, names: Set<string>): AIHubModelCatalogEntry {
+function validateEntry(value: unknown, names: Set<string>, requestProfiles: Record<string, AIHubRequestProfile>): AIHubModelCatalogEntry {
     if (!isRecord(value)) throw new Error("模型条目格式无效");
     const model = value.model;
     const kind = value.kind;
@@ -110,11 +118,63 @@ function validateEntry(value: unknown, names: Set<string>): AIHubModelCatalogEnt
     names.add(normalized);
     if (!isModelCapability(kind) || typeof value.enabled !== "boolean") throw new Error(`模型 ${model} 的分类或启用状态无效`);
     if (!adaptersByKind[kind].includes(adapter as AIHubModelAdapter)) throw new Error(`模型 ${model} 的适配器与分类不匹配`);
+    const requestProfile = value.requestProfile;
+    if (requestProfile !== undefined && (typeof requestProfile !== "string" || !requestProfiles[requestProfile] || requestProfiles[requestProfile].kind !== kind)) throw new Error(`模型 ${model} 的请求协议无效`);
     const metadata = validateMetadata(value, model);
-    if (kind === "text" || kind === "audio") return { model, kind, enabled: value.enabled, adapter: adapter as AIHubModelAdapter, ...metadata };
+    const protocol = requestProfile ? { requestProfile } : {};
+    if (kind === "text" || kind === "audio") return { model, kind, enabled: value.enabled, adapter: adapter as AIHubModelAdapter, ...protocol, ...metadata };
     if (!isRecord(value.capability)) throw new Error(`模型 ${model} 缺少能力配置`);
     const capability = validateCapability(value.capability, model, kind);
-    return { model, kind, enabled: value.enabled, adapter: adapter as AIHubModelAdapter, capability, ...metadata };
+    return { model, kind, enabled: value.enabled, adapter: adapter as AIHubModelAdapter, capability, ...protocol, ...metadata };
+}
+
+function validateRequestProfiles(value: unknown) {
+    if (value === undefined) return {};
+    if (!isRecord(value) || Object.keys(value).length > 50) throw new Error("模型请求协议集合无效");
+    return Object.fromEntries(Object.entries(value).map(([id, profile]) => [validateProfileId(id), validateRequestProfile(profile, id)]));
+}
+
+function validateProfileId(id: string) {
+    if (!/^[a-z0-9][a-z0-9.-]{0,63}$/.test(id)) throw new Error("模型请求协议名称无效");
+    return id;
+}
+
+function validateRequestProfile(value: unknown, id: string): AIHubRequestProfile {
+    if (!isRecord(value) || value.kind !== "video" || value.method !== "POST" || !["json", "multipart"].includes(String(value.bodyType))) throw new Error(`请求协议 ${id} 的基础信息无效`);
+    validateEndpoint(value.endpoint, id);
+    if (!Array.isArray(value.fields) || !value.fields.length || value.fields.length > 32) throw new Error(`请求协议 ${id} 的字段无效`);
+    const fields = value.fields.map((field) => validateRequestField(field, id));
+    const task = value.task === undefined ? undefined : validateTaskProtocol(value.task, id);
+    return { kind: "video", method: "POST", endpoint: value.endpoint as string, bodyType: value.bodyType as "json" | "multipart", fields, ...(task ? { task } : {}) };
+}
+
+function validateRequestField(value: unknown, id: string): AIHubRequestField {
+    const sources = ["model", "prompt", "seconds", "aspectRatio", "resolution", "references", "videoReferences", "audioReferences", "firstFrame", "lastFrame"];
+    const types = ["string", "number", "boolean", "string-array"];
+    if (!isRecord(value) || !sources.includes(String(value.source)) || !types.includes(String(value.type))) throw new Error(`请求协议 ${id} 包含无效字段`);
+    validateFieldPath(value.target, id);
+    if (value.singleTarget !== undefined) validateFieldPath(value.singleTarget, id);
+    if (value.required !== undefined && typeof value.required !== "boolean") throw new Error(`请求协议 ${id} 的必填规则无效`);
+    if (value.singleTarget !== undefined && value.type !== "string-array") throw new Error(`请求协议 ${id} 的单值字段规则无效`);
+    return value as AIHubRequestField;
+}
+
+function validateTaskProtocol(value: unknown, id: string): AIHubTaskProtocol {
+    if (!isRecord(value)) throw new Error(`请求协议 ${id} 的任务规则无效`);
+    validateEndpoint(value.pollEndpoint, id, true);
+    for (const key of ["idFields", "statusFields", "resultUrlFields", "errorFields", "completedStatuses", "failedStatuses"] as const) {
+        if (!isStringArray(value[key]) || !value[key].length || value[key].length > 16) throw new Error(`请求协议 ${id} 的 ${key} 无效`);
+        value[key].forEach((item) => validateFieldPath(item, id));
+    }
+    return value as AIHubTaskProtocol;
+}
+
+function validateEndpoint(value: unknown, id: string, requireId = false) {
+    if (typeof value !== "string" || !/^\/[A-Za-z0-9._~{}/-]+$/.test(value) || value.includes("..") || (requireId && !value.includes("{id}"))) throw new Error(`请求协议 ${id} 的接口地址无效`);
+}
+
+function validateFieldPath(value: unknown, id: string) {
+    if (typeof value !== "string" || !/^[A-Za-z_][A-Za-z0-9_.]{0,79}$/.test(value) || ["__proto__", "prototype", "constructor"].some((part) => value.split(".").includes(part))) throw new Error(`请求协议 ${id} 的字段路径无效`);
 }
 
 function validateMetadata(value: Record<string, unknown>, model: string) {

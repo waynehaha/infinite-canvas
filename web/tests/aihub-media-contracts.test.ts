@@ -158,6 +158,12 @@ test("Seedance 首尾帧必须成对且不能混用其他素材", () => {
     );
 });
 
+test("Doubao Seedance 时长由请求配置转换为字符串", () => {
+    const body = createAIHubVideoBody(videoInput({ model: "Doubao-Seedance-2.0-mini-480p", seconds: "4" }));
+    assert.equal(body.seconds, "4");
+    assert.equal(typeof body.seconds, "string");
+});
+
 test("Omni 首尾帧也必须成对", () => {
     assert.throws(() => createAIHubVideoBody(videoInput({ firstFrame: "https://cdn.example.com/first.png" })), /同时提供/);
     const body = createAIHubVideoBody(videoInput({ firstFrame: "https://cdn.example.com/first.png", lastFrame: "https://cdn.example.com/last.png" }));

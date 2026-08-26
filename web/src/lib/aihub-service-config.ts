@@ -1,5 +1,6 @@
 import { AIHUB_BASE_URL, AIHUB_DEFAULT_MODEL } from "@/lib/aihub-models";
 import { buildBuiltInAIHubModelCatalog, parseAIHubModelCatalog, type AIHubModelCatalog, type AIHubModelCatalogEntry } from "@/lib/aihub-model-catalog";
+import type { AIHubRequestProfile } from "@/lib/aihub-request-profile";
 
 export const AIHUB_SERVICE_CONFIG_SCHEMA_VERSION = 1;
 
@@ -21,6 +22,7 @@ export type AIHubServiceConfig = {
         baseUrl: string;
     };
     defaults: AIHubServiceConfigDefaults;
+    requestProfiles: Record<string, AIHubRequestProfile>;
     models: AIHubModelCatalogEntry[];
 };
 
@@ -45,6 +47,7 @@ export function buildAIHubServiceConfig(catalog: AIHubModelCatalog, baseUrl: str
         source: catalog.source,
         service: { providerId: "aihub", name: "AIHub", baseUrl: normalizeBaseUrl(baseUrl) },
         defaults,
+        requestProfiles: catalog.requestProfiles,
         models: catalog.models,
     };
 }
@@ -55,6 +58,7 @@ export function serviceConfigCatalog(config: AIHubServiceConfig): AIHubModelCata
         catalogId: "aihub-model-catalog",
         updatedAt: config.updatedAt,
         source: config.source,
+        requestProfiles: config.requestProfiles,
         models: config.models,
     };
 }
@@ -77,7 +81,7 @@ export function parseAIHubServiceConfig(text: string, fallback?: { baseUrl: stri
     if (!isRecord(value.service) || value.service.providerId !== "aihub" || value.service.name !== "AIHub") throw new Error("AIHub 服务标识无效");
     const baseUrl = validateBaseUrl(value.service.baseUrl);
     if (typeof value.updatedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T/.test(value.updatedAt) || typeof value.source !== "string") throw new Error("AIHub 服务配置的版本信息无效");
-    const catalog = parseAIHubModelCatalog(JSON.stringify({ schemaVersion: 1, catalogId: "aihub-model-catalog", updatedAt: value.updatedAt, source: value.source, models: value.models }));
+    const catalog = parseAIHubModelCatalog(JSON.stringify({ schemaVersion: 1, catalogId: "aihub-model-catalog", updatedAt: value.updatedAt, source: value.source, requestProfiles: value.requestProfiles, models: value.models }));
     const defaults = validateDefaults(value.defaults, catalog.models);
     return buildAIHubServiceConfig(catalog, baseUrl, defaults);
 }

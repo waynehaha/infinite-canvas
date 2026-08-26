@@ -1,5 +1,6 @@
 import { aihubModelAdapter, isAIHubOmniModel, isAIHubSeedanceModel } from "@/lib/aihub-models";
 import { getAIHubImageCapability, getAIHubVideoCapability, getAIHubVideoImageLimit, normalizeAIHubRangeValue, normalizeAIHubSelectValue, normalizeAIHubVideoAspectRatio } from "@/lib/aihub-model-capabilities";
+import { buildAIHubConfiguredRequestBody, getAIHubRequestProfile } from "@/lib/aihub-request-profile";
 
 export type AIHubMediaValue = string | File;
 
@@ -33,6 +34,22 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
                 : input.seconds;
     if (capability?.promptMaxLength && Array.from(input.prompt).length > capability.promptMaxLength) {
         throw new Error(`${capability.model} 提示词最多支持 ${capability.promptMaxLength} 个字符`);
+    }
+    const requestProfile = getAIHubRequestProfile(input.model);
+    if (requestProfile) {
+        assertConfiguredVideoInput(capability, input);
+        return buildAIHubConfiguredRequestBody(requestProfile, {
+            model: input.model,
+            prompt: input.prompt,
+            seconds,
+            aspectRatio,
+            resolution: input.resolution,
+            references: input.references,
+            videoReferences: input.videoReferences,
+            audioReferences: input.audioReferences,
+            firstFrame: input.firstFrame,
+            lastFrame: input.lastFrame,
+        });
     }
     if (adapter === "video-grok") {
         const resolution = capability?.resolution?.mode === "select" ? normalizeAIHubSelectValue(capability.resolution, input.resolution) : String(capability?.resolution?.value || input.resolution);
@@ -214,6 +231,20 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
     if (input.references[0]) body.set("image_url", input.references[0]);
     if (input.references.length > 1) body.set("images", JSON.stringify(input.references));
     return body;
+}
+
+function assertConfiguredVideoInput(capability: ReturnType<typeof getAIHubVideoCapability>, input: AIHubVideoBuildInput) {
+    if (!capability) return;
+    const hasFirstFrame = Boolean(input.firstFrame);
+    const hasLastFrame = Boolean(input.lastFrame);
+    const frames = capability.references?.frames;
+    if ((hasFirstFrame || hasLastFrame) && !frames) throw new Error(`${capability.model} 不支持首尾帧`);
+    if (frames?.mode === "pair" && hasFirstFrame !== hasLastFrame) throw new Error("必须同时提供首帧和尾帧");
+    if (frames?.exclusive && hasFirstFrame && hasLastFrame && (input.references.length || input.videoReferences.length || input.audioReferences.length)) throw new Error("首尾帧模式不能同时添加其他参考素材");
+    assertMediaLimit("参考图", capability.references?.images, input.references);
+    assertMediaLimit("参考视频", capability.references?.videos, input.videoReferences);
+    assertMediaLimit("参考音频", capability.references?.audios, input.audioReferences);
+    if (capability.requiresImageWith?.includes("audios") && input.audioReferences.length && !input.references.length && !input.videoReferences.length) throw new Error("参考音频需要同时提供参考图或参考视频");
 }
 
 export function aiHubVideoFailureMessage(model: string, message: string) {

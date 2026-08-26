@@ -13,12 +13,14 @@ registerHooks({
 const { applyAIHubModelCatalog, buildBuiltInAIHubModelCatalog, parseAIHubModelCatalog } = await import("../src/lib/aihub-model-catalog.ts");
 const { clearAIHubRuntimeCapabilities, getAIHubVideoCapability } = await import("../src/lib/aihub-model-capabilities.ts");
 const { aihubModelAdapter } = await import("../src/lib/aihub-models.ts");
+const { clearAIHubRuntimeRequestProfiles, getAIHubRequestProfile } = await import("../src/lib/aihub-request-profile.ts");
 
 test("内置模型配置可以导出并重新导入", () => {
     const catalog = buildBuiltInAIHubModelCatalog();
     const parsed = parseAIHubModelCatalog(JSON.stringify(catalog));
     assert.equal(parsed.schemaVersion, 1);
     assert.ok(parsed.models.some((entry) => entry.model === "grok-imagine-video-6s"));
+    assert.equal(parsed.models.find((entry) => entry.model === "Doubao-Seedance-2.0-mini-480p")?.requestProfile, "seedance-2.0-direct");
 });
 
 test("模型配置拒绝密钥和重复模型", () => {
@@ -40,4 +42,23 @@ test("导入配置后运行时能力和适配器立即生效", () => {
     assert.equal(getAIHubVideoCapability("grok-imagine-video-2")?.model, "grok-imagine-video-2");
     assert.equal(aihubModelAdapter("grok-imagine-video-2"), "video-grok-fixed");
     clearAIHubRuntimeCapabilities();
+    clearAIHubRuntimeRequestProfiles();
+});
+
+test("在线配置可以修改请求字段类型且拒绝不安全协议", () => {
+    const catalog = buildBuiltInAIHubModelCatalog();
+    const custom = {
+        ...catalog,
+        requestProfiles: {
+            ...catalog.requestProfiles,
+            "seedance-2.0-direct": {
+                ...catalog.requestProfiles["seedance-2.0-direct"],
+                fields: catalog.requestProfiles["seedance-2.0-direct"].fields.map((field) => (field.source === "seconds" ? { ...field, type: "number" } : field)),
+            },
+        },
+    };
+    applyAIHubModelCatalog(parseAIHubModelCatalog(JSON.stringify(custom)), false);
+    assert.equal(getAIHubRequestProfile("Doubao-Seedance-2.0-mini-480p")?.fields.find((field) => field.source === "seconds")?.type, "number");
+    assert.throws(() => parseAIHubModelCatalog(JSON.stringify({ ...custom, requestProfiles: { bad: { ...custom.requestProfiles["seedance-2.0-direct"], endpoint: "https://evil.example.com/videos" } } })), /接口地址无效/);
+    clearAIHubRuntimeRequestProfiles();
 });
