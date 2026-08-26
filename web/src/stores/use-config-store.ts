@@ -37,7 +37,7 @@ const AIHUB_PRIOR_DEFAULT_MODELS = AIHUB_PRE_H3_DEFAULT_MODELS.filter((model) =>
 const AIHUB_PREVIOUS_DEFAULT_MODELS = [...AIHUB_PRIOR_DEFAULT_MODELS, "gpt-5-5", "gpt-5-3", "gpt-5-3-mini", "gpt-5-2"];
 
 export type VideoMultiPromptItem = { prompt: string; duration: string };
-export type VideoElementReference = { id: string; kind: "image" | "video" | "audio"; name: string; type: string; dataUrl?: string; url?: string; storageKey?: string; bytes?: number; width?: number; height?: number; durationMs?: number };
+export type VideoElementReference = { id: string; kind: "image" | "video" | "audio"; name: string; type: string; dataUrl?: string; url?: string; storageKey?: string; bytes?: number; width?: number; height?: number; durationMs?: number; frameRate?: number; minFrameRate?: number; maxFrameRate?: number; frameRateMode?: "constant" | "variable"; frameCount?: number; frameRateStatus?: "measured" | "unsupported" | "failed" };
 export type VideoElementItem = { name: string; description: string; references: VideoElementReference[] };
 
 export type AiConfig = {

@@ -141,7 +141,7 @@ export function DiagnosticLogModal({ open, scopeId, scopeTitle, scopeLabel = "�
                         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-amber-500 dark:text-amber-400" />
                         <div className="text-xs leading-5">
                             <div className="font-medium text-amber-600 dark:text-amber-400">导出内容与安全说明</div>
-                            <div className="mt-1 text-stone-600 dark:text-stone-400">诊断包会包含提示词正文、本地参考图原文件、原文件名及图片元数据；公网参考图只记录链接。软件不会额外写入 API Key 或请求鉴权信息，日志仅下载到本机，不会自动上传。</div>
+                            <div className="mt-1 text-stone-600 dark:text-stone-400">诊断包会包含提示词正文、本地参考图和参考视频原文件、原文件名及媒体元数据；公网参考素材只记录链接。软件不会额外写入 API Key 或请求鉴权信息，日志仅下载到本机，不会自动上传。</div>
                         </div>
                     </div>
                 </div>
@@ -177,11 +177,11 @@ export function DiagnosticLogModal({ open, scopeId, scopeTitle, scopeLabel = "�
                         <div className="font-medium text-stone-900 dark:text-stone-100">诊断包将包含</div>
                         <ul className="mt-2 list-disc space-y-1 pl-5 leading-6 text-stone-600 dark:text-stone-400">
                             <li>本次任务的提示词正文；</li>
-                            <li>本地参考图原文件、原文件名及图片元数据；</li>
-                            <li>公网参考图链接，以及每张图片的尺寸、大小、格式和请求使用情况。</li>
+                            <li>本地参考图和参考视频原文件、原文件名及媒体元数据；</li>
+                            <li>公网参考素材链接，以及每个素材的尺寸、大小、格式和请求使用情况。</li>
                         </ul>
                     </div>
-                    <div className="text-xs leading-5 text-stone-500">软件不会额外写入 API Key、登录凭证或请求鉴权信息，诊断包只会下载到本机。参考图的画面、原文件名及拍摄时间、位置等元数据会原样保留，请确认后再发送给他人。</div>
+                    <div className="text-xs leading-5 text-stone-500">软件不会额外写入 API Key、登录凭证或请求鉴权信息，诊断包只会下载到本机。参考图和参考视频的画面、声音、原文件名及拍摄时间、位置等元数据会原样保留，请确认后再发送给他人。</div>
                     <Checkbox checked={skipFutureNotice} onChange={(event) => setSkipFutureNotice(event.target.checked)}>
                         下次不再提醒
                     </Checkbox>

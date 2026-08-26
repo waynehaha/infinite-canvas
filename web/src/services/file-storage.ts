@@ -6,8 +6,9 @@ import { nanoid } from "nanoid";
 import { apiGet } from "@/services/api/request";
 import { canUseGlobalStorage, getProxyUrl, loadUserStorageProvider, type StorageConfig, type UserStorageProvider } from "@/services/image-storage";
 import { useUserStore } from "@/stores/use-user-store";
+import type { VideoFrameRateMetadata } from "@/types/media";
 
-export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
+export type UploadedFile = VideoFrameRateMetadata & { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "media_files" });
 const objectUrls = new Map<string, string>();
@@ -19,7 +20,7 @@ export async function uploadMediaFile(input: string | Blob, prefix = "file"): Pr
     await store.setItem(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
-    const meta = blob.type.startsWith("video/") ? await readVideoMeta(url) : {};
+    const meta = blob.type.startsWith("video/") ? await readVideoMeta(url, blob) : {};
     return { url, storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta };
 }
 
@@ -67,7 +68,7 @@ async function uploadMediaBlobToServer(blob: Blob, filename: string): Promise<Up
     const response = await fetch("/api/v1/files", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData });
     const payload = (await response.json().catch(() => null)) as { code?: number; msg?: string; data?: UploadedFile } | null;
     if (!response.ok || payload?.code !== 0 || !payload.data) throw new Error(payload?.msg || "视频同步失败");
-    const meta = payload.data.mimeType?.startsWith("video/") ? await readVideoMeta(payload.data.url) : {};
+    const meta = payload.data.mimeType?.startsWith("video/") ? await readVideoBlobMeta(blob) : {};
     return { ...payload.data, bytes: payload.data.bytes || blob.size, mimeType: payload.data.mimeType || blob.type || "video/mp4", ...meta };
 }
 
@@ -169,7 +170,21 @@ export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()
     return keys;
 }
 
-function readVideoMeta(url: string) {
+async function readVideoBlobMeta(blob: Blob) {
+    const url = URL.createObjectURL(blob);
+    try {
+        return await readVideoMeta(url, blob);
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+}
+
+async function readVideoMeta(url: string, blob: Blob) {
+    const [elementMeta, frameRateMeta] = await Promise.all([readVideoElementMeta(url), readVideoFrameRate(blob)]);
+    return { ...elementMeta, ...frameRateMeta };
+}
+
+function readVideoElementMeta(url: string) {
     return new Promise<{ width: number; height: number }>((resolve) => {
         const video = document.createElement("video");
         let settled = false;
@@ -188,6 +203,30 @@ function readVideoMeta(url: string) {
         video.src = url;
         video.load();
     });
+}
+
+function readVideoFrameRate(blob: Blob) {
+    if (!isMp4Video(blob)) return Promise.resolve<VideoFrameRateMetadata>({ frameRateStatus: "unsupported" });
+    return new Promise<VideoFrameRateMetadata>((resolve) => {
+        const worker = new Worker(new URL("../workers/video-frame-rate-worker.ts", import.meta.url), { type: "module" });
+        const id = nanoid();
+        const timer = window.setTimeout(() => done({ frameRateStatus: "failed" }), 10000);
+        function done(metadata: VideoFrameRateMetadata) {
+            window.clearTimeout(timer);
+            worker.terminate();
+            resolve(metadata);
+        }
+        worker.onmessage = (event: MessageEvent<{ id: string; metadata: VideoFrameRateMetadata }>) => {
+            if (event.data.id === id) done(event.data.metadata);
+        };
+        worker.onerror = () => done({ frameRateStatus: "failed" });
+        worker.postMessage({ id, blob });
+    });
+}
+
+function isMp4Video(blob: Blob) {
+    const name = "name" in blob && typeof blob.name === "string" ? blob.name : "";
+    return ["video/mp4", "video/quicktime", "application/mp4"].includes(blob.type.toLowerCase()) || /\.(mp4|mov|m4v)$/i.test(name);
 }
 
 function toProviderPayload(provider: UserStorageProvider) {

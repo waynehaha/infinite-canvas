@@ -38,8 +38,8 @@ test("诊断导出固定包含提示词并在界面明确说明安全范围", as
     const service = await readFile(new URL("src/services/diagnostic-log.ts", webRoot), "utf8");
     assert.doesNotMatch(modal, /includePrompt|默认不选/);
     assert.match(modal, /本次任务的提示词正文/);
-    assert.match(modal, /本地参考图原文件、原文件名及图片元数据/);
-    assert.match(modal, /公网参考图只记录链接/);
+    assert.match(modal, /本地参考图和参考视频原文件、原文件名及媒体元数据/);
+    assert.match(modal, /公网参考素材只记录链接/);
     assert.match(modal, /不会额外写入 API Key/);
     assert.match(modal, /不会自动上传/);
     assert.match(modal, /useState\(true\)/);
@@ -49,9 +49,11 @@ test("诊断导出固定包含提示词并在界面明确说明安全范围", as
     assert.match(service, /sanitizeDiagnosticValue\(\{ \.\.\.task, prompt: task\.prompt \}, true\)/);
 });
 
-test("参考图诊断记录尺寸并区分本地原文件与公网链接", async () => {
+test("参考图和参考视频诊断记录尺寸并区分本地原文件与公网链接", async () => {
     const webRoot = new URL("../", import.meta.url);
     const service = await readFile(new URL("src/services/diagnostic-log.ts", webRoot), "utf8");
+    const videoPage = await readFile(new URL("src/app/(user)/video/page.tsx", webRoot), "utf8");
+    const canvas = await readFile(new URL("src/app/(user)/canvas/[id]/canvas-client-page.tsx", webRoot), "utf8");
     assert.match(service, /DiagnosticReferenceItemSummary/);
     assert.match(service, /width\?: number/);
     assert.match(service, /height\?: number/);
@@ -60,6 +62,11 @@ test("参考图诊断记录尺寸并区分本地原文件与公网链接", async
     assert.match(service, /exportType: "public-url"/);
     assert.match(service, /参考素材\/素材信息\.json/);
     assert.match(service, /getImageBlob/);
+    assert.match(service, /getMediaBlob/);
+    assert.match(service, /referenceExtension/);
+    assert.match(service, /本地参考图和参考视频原文件/);
+    assert.match(videoPage, /diagnosticReferenceAssets\("video", snapshot\.videoReferences\)/);
+    assert.match(canvas, /diagnosticReferenceAssets\("video", context\.referenceVideos, mode === "video"\)/);
 });
 
 test("画布诊断记录参考素材来源、读取结果和实际请求数量", async () => {

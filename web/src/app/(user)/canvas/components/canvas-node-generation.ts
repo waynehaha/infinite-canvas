@@ -2,7 +2,7 @@ import type { ChatCompletionMessage } from "@/services/api/image";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
-import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import { videoFrameRateMetadata, type ReferenceAudio, type ReferenceVideo } from "@/types/media";
 import type { VideoElementItem, VideoElementReference, VideoMultiPromptItem } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
 import { isCanvasImageNodeType } from "../utils/canvas-panorama";
@@ -185,7 +185,7 @@ function buildCanvasVideoAdvancedContext(sourceNode: CanvasNodeData | undefined,
 
 function inputToElementReference(input: NodeGenerationInput | undefined): VideoElementReference | null {
     if (input?.image) return { id: input.nodeId, kind: "image", name: input.image.name, type: input.image.type, dataUrl: input.image.dataUrl, storageKey: input.image.storageKey };
-    if (input?.video) return { id: input.nodeId, kind: "video", name: input.video.name, type: input.video.type, url: input.video.url, storageKey: input.video.storageKey, bytes: input.video.bytes, width: input.video.width, height: input.video.height, durationMs: input.video.durationMs };
+    if (input?.video) return { id: input.nodeId, kind: "video", name: input.video.name, type: input.video.type, url: input.video.url, storageKey: input.video.storageKey, bytes: input.video.bytes, width: input.video.width, height: input.video.height, durationMs: input.video.durationMs, ...videoFrameRateMetadata(input.video) };
     if (input?.audio) return { id: input.nodeId, kind: "audio", name: input.audio.name, type: input.audio.type, url: input.audio.url, storageKey: input.audio.storageKey, durationMs: input.audio.durationMs };
     return null;
 }
@@ -273,6 +273,7 @@ function readReferenceVideo(node: CanvasNodeData): ReferenceVideo | null {
         width: node.metadata.naturalWidth,
         height: node.metadata.naturalHeight,
         durationMs: node.metadata.durationMs,
+        ...videoFrameRateMetadata(node.metadata),
     };
 }
 

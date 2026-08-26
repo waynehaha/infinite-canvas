@@ -8,6 +8,7 @@ import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { uploadAssetMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import { useAssetStore, type Asset, type AssetKind, type AudioAsset, type ImageAsset, type VideoAsset } from "@/stores/use-asset-store";
+import { videoFrameRateMetadata } from "@/types/media";
 
 type AssetFormValues = {
     kind: AssetKind;
@@ -128,7 +129,7 @@ export function AssetFormModal({ open, asset = null, onClose }: AssetFormModalPr
         if (formKind === "video" && !file.type.startsWith("video/")) return;
         if (formKind === "audio" && !file.type.startsWith("audio/") && !/\.(mp3|wav)$/i.test(file.name)) return;
         const media = await uploadAssetMediaFile(file, formKind === "audio" ? "asset-audio" : "asset-video");
-        const draft = formKind === "audio" ? { url: media.url, storageKey: media.storageKey, bytes: media.bytes, mimeType: media.mimeType } : { url: media.url, storageKey: media.storageKey, width: media.width || 0, height: media.height || 0, bytes: media.bytes, mimeType: media.mimeType };
+        const draft = formKind === "audio" ? { url: media.url, storageKey: media.storageKey, bytes: media.bytes, mimeType: media.mimeType } : { url: media.url, storageKey: media.storageKey, width: media.width || 0, height: media.height || 0, bytes: media.bytes, mimeType: media.mimeType, durationMs: media.durationMs, ...videoFrameRateMetadata(media) };
         setMediaDraft(draft);
         form.setFieldValue("content", media.url);
         if (!form.getFieldValue("title")) form.setFieldValue("title", file.name);

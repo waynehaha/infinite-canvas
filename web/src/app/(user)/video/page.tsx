@@ -31,7 +31,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { appendDiagnosticEvent, attachDiagnosticRemoteTaskId, diagnosticReferenceAssets, diagnosticReferenceSummary, finishDiagnosticTask, startDiagnosticTask } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
-import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import { videoFrameRateMetadata, type ReferenceAudio, type ReferenceVideo } from "@/types/media";
 
 type GeneratedVideo = {
     id: string;
@@ -388,7 +388,7 @@ export default function VideoPage() {
             const nextVideoReferences = await Promise.all(
                 videoFiles.map(async (file) => {
                     const video = await uploadMediaFile(file, "video-reference");
-                    return { id: nanoid(), name: file.name, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs };
+                    return { id: nanoid(), name: file.name, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs, ...videoFrameRateMetadata(video) };
                 }),
             );
             const nextAudioReferences = filterAudioReferencesByDuration(
@@ -448,7 +448,7 @@ export default function VideoPage() {
                 message.warning("已忽略不符合时长要求的元素视频：3-8 秒");
                 return null;
             }
-            return { id: nanoid(), kind: "video", name: file.name, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs };
+            return { id: nanoid(), kind: "video", name: file.name, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs, ...videoFrameRateMetadata(video) };
         }
         if (isSupportedAudioFile(file)) {
             if (file.size > SEEDANCE_REFERENCE_LIMITS.audioMaxBytes) return null;
@@ -534,7 +534,7 @@ export default function VideoPage() {
             const nextVideoReferences = await Promise.all(
                 usable.map(async (blob, index) => {
                     const video = await uploadMediaFile(blob, "video-reference");
-                    return { id: nanoid(), name: `clipboard-video-${index + 1}.mp4`, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs };
+                    return { id: nanoid(), name: `clipboard-video-${index + 1}.mp4`, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs, ...videoFrameRateMetadata(video) };
                 }),
             );
             setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, aiHubVideoLimit));
@@ -720,6 +720,7 @@ export default function VideoPage() {
                 ...diagnosticReferenceAssets("image", snapshot.references),
                 ...diagnosticReferenceAssets("first-frame", snapshot.firstFrame ? [snapshot.firstFrame] : []),
                 ...diagnosticReferenceAssets("last-frame", snapshot.lastFrame ? [snapshot.lastFrame] : []),
+                ...diagnosticReferenceAssets("video", snapshot.videoReferences),
             ],
         });
         const capability = getAIHubVideoCapability(snapshot.model);
@@ -904,7 +905,7 @@ export default function VideoPage() {
                 message.warning("请选择视频素材");
                 return;
             }
-            setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: payload.mimeType || "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height, bytes: payload.bytes }].slice(0, aiHubVideoLimit));
+            setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: payload.mimeType || "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height, bytes: payload.bytes, durationMs: payload.durationMs, ...videoFrameRateMetadata(payload) }].slice(0, aiHubVideoLimit));
         };
         const insertAudio = () => {
             if (!aiHubAudioLimit) {
@@ -950,7 +951,7 @@ export default function VideoPage() {
 
     const elementReferenceFromAsset = (payload: InsertAssetPayload): VideoElementReference | null => {
         if (payload.kind === "image") return { id: nanoid(), kind: "image", name: payload.title, type: payload.mimeType || "image/*", dataUrl: payload.dataUrl, storageKey: payload.storageKey, bytes: payload.bytes, width: payload.width, height: payload.height };
-        if (payload.kind === "video") return { id: nanoid(), kind: "video", name: payload.title, type: payload.mimeType || "video/mp4", url: payload.url, storageKey: payload.storageKey, bytes: payload.bytes, width: payload.width, height: payload.height };
+        if (payload.kind === "video") return { id: nanoid(), kind: "video", name: payload.title, type: payload.mimeType || "video/mp4", url: payload.url, storageKey: payload.storageKey, bytes: payload.bytes, width: payload.width, height: payload.height, durationMs: payload.durationMs, ...videoFrameRateMetadata(payload) };
         if (payload.kind === "audio") return { id: nanoid(), kind: "audio", name: payload.title, type: payload.mimeType || "audio/mpeg", url: payload.url, storageKey: payload.storageKey, durationMs: payload.durationMs };
         return null;
     };

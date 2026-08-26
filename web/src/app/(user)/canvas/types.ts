@@ -73,6 +73,12 @@ export type CanvasNodeMetadata = {
     mimeType?: string;
     bytes?: number;
     durationMs?: number;
+    frameRate?: number;
+    minFrameRate?: number;
+    maxFrameRate?: number;
+    frameRateMode?: "constant" | "variable";
+    frameCount?: number;
+    frameRateStatus?: "measured" | "unsupported" | "failed";
     startedAt?: number;
     progress?: number;
     imageTaskId?: string;
@@ -140,7 +146,7 @@ export type CanvasAssistantReference = {
 export type InsertAssetPayload =
     | { kind: "text"; content: string; title: string; assetId?: string; source?: "asset" | "library" }
     | { kind: "image"; dataUrl: string; title: string; storageKey?: string; assetId?: string; width?: number; height?: number; bytes?: number; mimeType?: string; source?: "asset" | "library" }
-    | { kind: "video"; url: string; title: string; storageKey?: string; assetId?: string; width?: number; height?: number; bytes?: number; mimeType?: string; source?: "asset" | "library" }
+    | { kind: "video"; url: string; title: string; storageKey?: string; assetId?: string; width?: number; height?: number; bytes?: number; mimeType?: string; durationMs?: number; frameRate?: number; minFrameRate?: number; maxFrameRate?: number; frameRateMode?: "constant" | "variable"; frameCount?: number; frameRateStatus?: "measured" | "unsupported" | "failed"; source?: "asset" | "library" }
     | { kind: "audio"; url: string; title: string; storageKey?: string; assetId?: string; bytes?: number; mimeType?: string; durationMs?: number; source?: "asset" | "library" };
 
 export type PendingAgentAsset = {

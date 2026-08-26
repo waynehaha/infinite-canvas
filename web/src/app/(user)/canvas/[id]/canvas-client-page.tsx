@@ -85,7 +85,7 @@ import {
     type ViewportTransform,
 } from "../types";
 import type { ReferenceImage } from "@/types/image";
-import type { ReferenceAudio } from "@/types/media";
+import { videoFrameRateMetadata, type ReferenceAudio } from "@/types/media";
 
 const CanvasPanoramaViewer = dynamic(() => import("../components/canvas-panorama-viewer"), { ssr: false, loading: () => null });
 
@@ -2449,7 +2449,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
             const id = nodeId || `video-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
             const nextSize = fitNodeSize(payload.width || spec.width, payload.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-            setNodes((prev) => [...prev, { id, type: CanvasNodeType.Video, title: payload.title, position: { x: center.x - nextSize.width / 2, y: center.y - nextSize.height / 2 }, width: nextSize.width, height: nextSize.height, metadata: { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height } }]);
+            setNodes((prev) => [...prev, { id, type: CanvasNodeType.Video, title: payload.title, position: { x: center.x - nextSize.width / 2, y: center.y - nextSize.height / 2 }, width: nextSize.width, height: nextSize.height, metadata: { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height, bytes: payload.bytes, mimeType: payload.mimeType, durationMs: payload.durationMs, ...videoFrameRateMetadata(payload) } }]);
             setSelectedNodeIds(new Set([id]));
             setSelectedConnectionId(null);
             return;
@@ -4739,7 +4739,7 @@ function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
 }
 
 function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
-    return { content: video.url, storageKey: video.storageKey, status: "success", naturalWidth: video.width, naturalHeight: video.height, bytes: video.bytes, mimeType: video.mimeType || "video/mp4", durationMs: video.durationMs };
+    return { content: video.url, storageKey: video.storageKey, status: "success", naturalWidth: video.width, naturalHeight: video.height, bytes: video.bytes, mimeType: video.mimeType || "video/mp4", durationMs: video.durationMs, ...videoFrameRateMetadata(video) };
 }
 
 function audioMetadata(audio: UploadedFile): CanvasNodeMetadata {
@@ -5110,6 +5110,7 @@ function diagnosticCanvasNodeSummary(node: CanvasNodeData) {
         bytes: node.metadata?.bytes,
         width: node.metadata?.naturalWidth,
         height: node.metadata?.naturalHeight,
+        ...videoFrameRateMetadata(node.metadata || {}),
     };
 }
 
@@ -5125,6 +5126,7 @@ function diagnosticGenerationInputSummary(input: NodeGenerationInput) {
         bytes: media && "bytes" in media ? media.bytes : undefined,
         width: media && "width" in media ? media.width : undefined,
         height: media && "height" in media ? media.height : undefined,
+        ...videoFrameRateMetadata(media || {}),
     };
 }
 
@@ -5135,6 +5137,7 @@ function diagnosticReferenceAssetsFromContext(context: NodeGenerationContext, mo
         ...diagnosticReferenceAssets("image", context.referenceImages, includesImages),
         ...diagnosticReferenceAssets("first-frame", context.firstFrame ? [context.firstFrame] : [], includesFrames),
         ...diagnosticReferenceAssets("last-frame", context.lastFrame ? [context.lastFrame] : [], includesFrames),
+        ...diagnosticReferenceAssets("video", context.referenceVideos, mode === "video"),
     ];
 }
 

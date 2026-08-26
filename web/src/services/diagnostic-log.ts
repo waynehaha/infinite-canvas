@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import { APP_VERSION } from "@/constant/env";
 import { diagnosticExportLooksSafe, diagnosticTextStats, prepareDiagnosticValue, sanitizeDiagnosticReferenceUrl, sanitizeDiagnosticText, sanitizeDiagnosticValue } from "@/lib/diagnostic-log-safety";
 import { createZip } from "@/lib/zip";
+import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob, imageToDataUrl } from "@/services/image-storage";
 
 export type DiagnosticMode = "image" | "video" | "audio" | "text" | "workflow";
@@ -19,6 +20,12 @@ export type DiagnosticReferenceItemSummary = {
     height?: number;
     bytes?: number;
     mimeType?: string;
+    frameRate?: number;
+    minFrameRate?: number;
+    maxFrameRate?: number;
+    frameRateMode?: "constant" | "variable";
+    frameCount?: number;
+    frameRateStatus?: "measured" | "unsupported" | "failed";
     source: "local" | "remote" | "unknown";
     includedInRequest: boolean;
 };
@@ -172,7 +179,7 @@ export function updateDiagnosticReferences(taskId: string | undefined, reference
     });
 }
 
-export function diagnosticReferenceAssets(kind: DiagnosticReferenceKind, items: Array<{ name?: string; type?: string; mimeType?: string; dataUrl?: string; url?: string; storageKey?: string; bytes?: number; width?: number; height?: number }>, includedInRequest = true): DiagnosticReferenceAsset[] {
+export function diagnosticReferenceAssets(kind: DiagnosticReferenceKind, items: Array<{ name?: string; type?: string; mimeType?: string; dataUrl?: string; url?: string; storageKey?: string; bytes?: number; width?: number; height?: number; frameRate?: number; minFrameRate?: number; maxFrameRate?: number; frameRateMode?: "constant" | "variable"; frameCount?: number; frameRateStatus?: "measured" | "unsupported" | "failed" }>, includedInRequest = true): DiagnosticReferenceAsset[] {
     return items.map((item, itemIndex) => {
         const value = item.url || item.dataUrl || "";
         const source = !item.storageKey && /^https?:/i.test(value) ? "remote" as const : item.storageKey || value ? "local" as const : "unknown" as const;
@@ -184,6 +191,12 @@ export function diagnosticReferenceAssets(kind: DiagnosticReferenceKind, items: 
             bytes: item.bytes || estimateDataUrlBytes(item.dataUrl),
             width: item.width,
             height: item.height,
+            frameRate: item.frameRate,
+            minFrameRate: item.minFrameRate,
+            maxFrameRate: item.maxFrameRate,
+            frameRateMode: item.frameRateMode,
+            frameCount: item.frameCount,
+            frameRateStatus: item.frameRateStatus,
             source,
             includedInRequest,
             url: source === "remote" ? value : item.url,
@@ -379,6 +392,12 @@ async function createDiagnosticReferenceFiles(task: DiagnosticTask) {
             originalName: asset.name || undefined,
             width: asset.width,
             height: asset.height,
+            frameRate: asset.frameRate,
+            minFrameRate: asset.minFrameRate,
+            maxFrameRate: asset.maxFrameRate,
+            frameRateMode: asset.frameRateMode,
+            frameCount: asset.frameCount,
+            frameRateStatus: asset.frameRateStatus,
             bytes: asset.bytes,
             mimeType: asset.mimeType,
             source: asset.source,
@@ -389,18 +408,18 @@ async function createDiagnosticReferenceFiles(task: DiagnosticTask) {
             continue;
         }
         try {
-            const image = await readLocalDiagnosticReference(asset);
-            if (!image) throw new Error("导出时无法读取本地参考图");
-            const fileName = diagnosticReferenceFileName(asset, image.type);
+            const file = await readLocalDiagnosticReference(asset);
+            if (!file) throw new Error(`导出时无法读取本地${referenceLabel(asset.kind)}`);
+            const fileName = diagnosticReferenceFileName(asset, file.type);
             const filePath = `参考素材/${referenceFilePrefix(asset.kind)}-${String(asset.index).padStart(2, "0")}-${fileName}`;
-            files.push({ name: filePath, data: image });
-            manifestItems.push({ ...base, bytes: asset.bytes || image.size, mimeType: asset.mimeType || image.type || undefined, exportType: "original-file", fileIncluded: true, filePath });
+            files.push({ name: filePath, data: file });
+            manifestItems.push({ ...base, bytes: asset.bytes || file.size, mimeType: asset.mimeType || file.type || undefined, exportType: "original-file", fileIncluded: true, filePath });
         } catch (error) {
-            manifestItems.push({ ...base, exportType: "original-file", fileIncluded: false, exportError: error instanceof Error ? sanitizeDiagnosticText(error.message) : "导出时无法读取本地参考图" });
+            manifestItems.push({ ...base, exportType: "original-file", fileIncluded: false, exportError: error instanceof Error ? sanitizeDiagnosticText(error.message) : `导出时无法读取本地${referenceLabel(asset.kind)}` });
         }
     }
     const manifest = {
-        notice: "本目录可能包含本地参考图原文件、原文件名及图片元数据；公网参考图只记录链接。软件配置中的 API Key、鉴权信息和链接签名参数会自动隐藏，但参考图原文件内容不会扫描或修改。",
+        notice: "本目录可能包含本地参考图和参考视频原文件、原文件名及媒体元数据；公网参考素材只记录链接。软件配置中的 API Key、鉴权信息和链接签名参数会自动隐藏，但本地参考素材原文件内容不会扫描或修改。",
         taskReferenceSummary: task.references,
         items: manifestItems,
     };
@@ -411,8 +430,12 @@ async function createDiagnosticReferenceFiles(task: DiagnosticTask) {
 
 async function readLocalDiagnosticReference(asset: DiagnosticReferenceAsset) {
     if (asset.storageKey) {
-        const stored = await getImageBlob(asset.storageKey).catch(() => null);
+        const stored = asset.kind === "video" || asset.kind === "audio" ? await getMediaBlob(asset.storageKey).catch(() => null) : await getImageBlob(asset.storageKey).catch(() => null);
         if (stored) return stored;
+    }
+    if ((asset.kind === "video" || asset.kind === "audio") && asset.url) {
+        const response = await fetch(asset.url).catch(() => null);
+        if (response?.ok) return response.blob();
     }
     const dataUrl = await imageToDataUrl({ storageKey: asset.storageKey, dataUrl: asset.dataUrl, url: asset.url }).catch(() => "");
     if (!dataUrl) return null;
@@ -422,10 +445,10 @@ async function readLocalDiagnosticReference(asset: DiagnosticReferenceAsset) {
 }
 
 function diagnosticReferenceFileName(asset: DiagnosticReferenceAsset, blobMimeType: string) {
-    const fallback = `reference.${imageExtension(asset.mimeType || blobMimeType)}`;
+    const fallback = `reference.${referenceExtension(asset.kind, asset.mimeType || blobMimeType)}`;
     const value = (asset.name || fallback).split(/[\\/]/).pop() || fallback;
     const safe = value.replace(/[\u0000-\u001f<>:"|?*]/g, "_").replace(/^\.+/, "").trim() || fallback;
-    return /\.[a-z0-9]{2,8}$/i.test(safe) ? safe : `${safe}.${imageExtension(asset.mimeType || blobMimeType)}`;
+    return /\.[a-z0-9]{2,8}$/i.test(safe) ? safe : `${safe}.${referenceExtension(asset.kind, asset.mimeType || blobMimeType)}`;
 }
 
 function referenceFilePrefix(kind: DiagnosticReferenceKind) {
@@ -438,6 +461,20 @@ function imageExtension(mimeType?: string) {
     if (mimeType === "image/gif") return "gif";
     if (mimeType === "image/avif") return "avif";
     return "png";
+}
+
+function referenceExtension(kind: DiagnosticReferenceKind, mimeType?: string) {
+    if (kind === "video") {
+        if (mimeType === "video/quicktime") return "mov";
+        if (mimeType === "video/webm") return "webm";
+        return "mp4";
+    }
+    if (kind === "audio") {
+        if (mimeType === "audio/wav" || mimeType === "audio/x-wav") return "wav";
+        if (mimeType === "audio/mp4" || mimeType === "audio/aac") return "m4a";
+        return "mp3";
+    }
+    return imageExtension(mimeType);
 }
 
 function estimateDataUrlBytes(value?: string) {
@@ -478,10 +515,10 @@ function buildDiagnosticSummary(task: DiagnosticTask) {
         "AI 创作工作台诊断日志",
         "",
         "安全说明",
-        "- 诊断文本不会写入软件配置中的 API Key、登录凭证、Cookie 或请求鉴权信息；参考图原文件内容不会扫描或修改。",
-        "- 包含本次任务的提示词正文、本地参考图原文件、原文件名及图片元数据。",
-        "- 公网参考图只记录链接，不重复下载；链接中的鉴权或签名参数会隐藏。",
-        "- 不包含参考视频、参考音频、生成结果、完整本地路径或存储 Key。",
+        "- 诊断文本不会写入软件配置中的 API Key、登录凭证、Cookie 或请求鉴权信息；本地参考素材原文件内容不会扫描或修改。",
+        "- 包含本次任务的提示词正文、本地参考图和参考视频原文件、原文件名及媒体元数据。",
+        "- 公网参考素材只记录链接，不重复下载；链接中的鉴权或签名参数会隐藏。",
+        "- 不包含参考音频、生成结果、完整本地路径或存储 Key。",
         "- 包含提示词正文，疑似密钥等敏感信息已自动隐藏。",
         "",
         "任务摘要",
@@ -500,7 +537,7 @@ function buildDiagnosticSummary(task: DiagnosticTask) {
         ...(task.references.length
             ? task.references.flatMap((item) => [
                 `- ${referenceLabel(item.kind)}：${item.count} 个${item.totalBytes ? `，共 ${formatBytes(item.totalBytes)}` : ""}${item.mimeTypes?.length ? `，${item.mimeTypes.join("、")}` : ""}`,
-                ...(item.items || []).map((detail) => `  - #${detail.index}：${detail.width && detail.height ? `${detail.width}×${detail.height}` : "尺寸未记录"}${detail.bytes ? `，${formatBytes(detail.bytes)}` : ""}${detail.mimeType ? `，${detail.mimeType}` : ""}，${detail.source === "remote" ? "公网链接" : detail.source === "local" ? "本地素材" : "来源未确定"}，${detail.includedInRequest ? "已进入本次请求" : "未进入请求"}`),
+                ...(item.items || []).map((detail) => `  - #${detail.index}：${detail.width && detail.height ? `${detail.width}×${detail.height}` : "尺寸未记录"}${detail.bytes ? `，${formatBytes(detail.bytes)}` : ""}${detail.mimeType ? `，${detail.mimeType}` : ""}${referenceFrameRateText(item.kind, detail)}，${detail.source === "remote" ? "公网链接" : detail.source === "local" ? "本地素材" : "来源未确定"}，${detail.includedInRequest ? "已进入本次请求" : "未进入请求"}`),
             ])
             : ["- 未记录参考素材"]),
         "",
@@ -510,7 +547,7 @@ function buildDiagnosticSummary(task: DiagnosticTask) {
     return sanitizeDiagnosticValue(lines.join("\n"), true) as string;
 }
 
-export function diagnosticReferenceSummary(kind: DiagnosticReferenceKind, items: Array<{ bytes?: number; width?: number; height?: number; type?: string; mimeType?: string; dataUrl?: string; url?: string; storageKey?: string }>, includedInRequest = true): DiagnosticReferenceSummary | null {
+export function diagnosticReferenceSummary(kind: DiagnosticReferenceKind, items: Array<{ bytes?: number; width?: number; height?: number; type?: string; mimeType?: string; dataUrl?: string; url?: string; storageKey?: string; frameRate?: number; minFrameRate?: number; maxFrameRate?: number; frameRateMode?: "constant" | "variable"; frameCount?: number; frameRateStatus?: "measured" | "unsupported" | "failed" }>, includedInRequest = true): DiagnosticReferenceSummary | null {
     if (!items.length) return null;
     const sources = new Set(
         items.map((item) => {
@@ -527,7 +564,7 @@ export function diagnosticReferenceSummary(kind: DiagnosticReferenceKind, items:
         totalBytes: totalBytes || undefined,
         mimeTypes: [...new Set(items.map((item) => item.mimeType || item.type || "").filter(Boolean))],
         source: sources.size === 1 ? Array.from(sources)[0] || "mixed" : "mixed",
-        items: diagnosticReferenceAssets(kind, items, includedInRequest).map(({ index, width, height, bytes, mimeType, source, includedInRequest: included }) => ({ index, width, height, bytes, mimeType, source, includedInRequest: included })),
+        items: diagnosticReferenceAssets(kind, items, includedInRequest).map(({ index, width, height, bytes, mimeType, frameRate, minFrameRate, maxFrameRate, frameRateMode, frameCount, frameRateStatus, source, includedInRequest: included }) => ({ index, width, height, bytes, mimeType, frameRate, minFrameRate, maxFrameRate, frameRateMode, frameCount, frameRateStatus, source, includedInRequest: included })),
     };
 }
 
@@ -570,6 +607,17 @@ function eventStatusLabel(status: DiagnosticEventStatus) {
 
 function referenceLabel(kind: DiagnosticReferenceSummary["kind"]) {
     return ({ image: "参考图", video: "参考视频", audio: "参考音频", "first-frame": "首帧", "last-frame": "尾帧" } as const)[kind];
+}
+
+function referenceFrameRateText(kind: DiagnosticReferenceKind, item: DiagnosticReferenceItemSummary) {
+    if (kind !== "video") return "";
+    if (item.frameRateStatus === "unsupported") return "，帧率未读取（格式不支持）";
+    if (item.frameRateStatus === "failed") return "，帧率读取失败";
+    if (!item.frameRate) return "，帧率未记录";
+    const range = item.minFrameRate && item.maxFrameRate ? `，范围 ${item.minFrameRate}-${item.maxFrameRate} FPS` : "";
+    const mode = item.frameRateMode ? `，${item.frameRateMode === "variable" ? "可变" : "恒定"}帧率` : "";
+    const count = item.frameCount ? `，${item.frameCount} 帧` : "";
+    return `，平均 ${item.frameRate} FPS${range}${mode}${count}`;
 }
 
 function formatBytes(bytes: number) {
