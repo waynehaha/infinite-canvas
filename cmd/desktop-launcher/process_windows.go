@@ -15,6 +15,15 @@ const (
 	createNewProcessGroup = 0x00000200
 	detachedProcess       = 0x00000008
 	createNoWindow        = 0x08000000
+	processQueryLimited   = 0x00001000
+	stillActive           = 259
+)
+
+var (
+	kernel32           = syscall.NewLazyDLL("kernel32.dll")
+	openProcess        = kernel32.NewProc("OpenProcess")
+	getExitCodeProcess = kernel32.NewProc("GetExitCodeProcess")
+	closeHandle        = kernel32.NewProc("CloseHandle")
 )
 
 func configureDetachedProcess(command *exec.Cmd) {
@@ -25,15 +34,21 @@ func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	output, err := exec.Command("tasklist", "/FI", "PID eq "+strconv.Itoa(pid), "/NH").Output()
-	return err == nil && strings.Contains(string(output), strconv.Itoa(pid))
+	handle, _, _ := openProcess.Call(processQueryLimited, 0, uintptr(uint32(pid)))
+	if handle == 0 {
+		return false
+	}
+	defer closeHandle.Call(handle)
+	var exitCode uint32
+	result, _, _ := getExitCodeProcess.Call(handle, uintptr(unsafe.Pointer(&exitCode)))
+	return result != 0 && exitCode == stillActive
 }
 
 func terminateProcessTree(pid int) error {
 	if !processAlive(pid) {
 		return nil
 	}
-	output, err := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").CombinedOutput()
+	output, err := hiddenCommand("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").CombinedOutput()
 	if err != nil && processAlive(pid) {
 		return fmt.Errorf("无法停止进程 %d：%s", pid, strings.TrimSpace(string(output)))
 	}
@@ -44,11 +59,17 @@ func terminateSingleProcess(pid int) error {
 	if !processAlive(pid) {
 		return nil
 	}
-	output, err := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/F").CombinedOutput()
+	output, err := hiddenCommand("taskkill", "/PID", strconv.Itoa(pid), "/F").CombinedOutput()
 	if err != nil && processAlive(pid) {
 		return fmt.Errorf("无法停止进程 %d：%s", pid, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func hiddenCommand(name string, args ...string) *exec.Cmd {
+	command := exec.Command(name, args...)
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	return command
 }
 
 func openBrowser(url string) error {
