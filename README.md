@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/waynehaha/infinite-canvas"><img src="https://img.shields.io/github/stars/waynehaha/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
-  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.3.4-2563eb?style=flat-square" alt="Version"></a>
+  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.3.5-2563eb?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
   <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-ready-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker ready"></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.2-000000?style=flat-square&logo=nextdotjs" alt="Next.js"></a>
@@ -57,7 +57,7 @@ APIMart 点此链接 [https://apimart.ai/register?aff=fWMrEv](https://apimart.ai
 前往 [GitHub Releases](https://github.com/waynehaha/infinite-canvas/releases) 下载 Windows x64 或 macOS Apple Silicon 安装包。安装包已内置完整运行环境，不需要 Docker Desktop、Node.js、Go 或 Bun。
 
 - Windows：安装 `.exe` 后双击桌面的“AI创作工作台”。
-- macOS：打开 `.dmg`，将启动和停止应用拖入 Applications。
+- macOS：打开 `.dmg`，将“AI创作工作台”拖入 Applications；停止时使用菜单栏的“退出并停止服务”。
 - 数据保存在系统用户目录，升级和普通卸载不会自动删除。
 
 详细说明见 [免 Docker 原生安装包](docs/overview/20260731-native-installers.md)。
