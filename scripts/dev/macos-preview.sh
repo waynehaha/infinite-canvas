@@ -11,8 +11,36 @@ BACKEND_LOG="$STATE_DIR/backend.log"
 FRONTEND_LOG="$STATE_DIR/frontend.log"
 BACKEND_URL="http://127.0.0.1:8080/api/health"
 FRONTEND_URL="http://127.0.0.1:3000"
+PRODUCT_NAME="infinite-canvas画布"
+WINDOW_TITLE="【${PRODUCT_NAME}】｜运行中"
+STARTED_BACKEND=0
+STARTED_FRONTEND=0
 
 mkdir -p "$STATE_DIR"
+
+show_startup_banner() {
+    if [ ! -t 1 ]; then
+        echo "$PRODUCT_NAME"
+        echo "● 运行中"
+        return
+    fi
+
+    local cyan=$'\033[96m' green=$'\033[1;32m' white=$'\033[1;97m' dim=$'\033[2;37m' reset=$'\033[0m'
+    printf '\033]0;%s\007\033[2J\033[H' "$WINDOW_TITLE"
+    printf '%s\n' "${cyan}╭────────────────────────────────────────────────╮${reset}"
+    printf '%s\n' "${cyan}│                                                │${reset}"
+    if [ "${TERM_PROGRAM:-}" = "Apple_Terminal" ]; then
+        printf '\033#3%s│  %s%s%s  │%s\r\n' "$cyan" "$white" "$PRODUCT_NAME" "$cyan" "$reset"
+        printf '\033#4%s│  %s%s%s  │%s\r\n\033#5' "$cyan" "$white" "$PRODUCT_NAME" "$cyan" "$reset"
+    else
+        printf '%s│              %s%s%s               │%s\n' "$cyan" "$white" "$PRODUCT_NAME" "$cyan" "$reset"
+    fi
+    printf '%s│                                                │%s\n' "$cyan" "$reset"
+    printf '%s│                    %s● 运行中%s                    │%s\n' "$cyan" "$green" "$cyan" "$reset"
+    printf '%s│              %s关闭此窗口将停止服务%s              │%s\n' "$cyan" "$dim" "$cyan" "$reset"
+    printf '%s│                                                │%s\n' "$cyan" "$reset"
+    printf '%s\n\n' "${cyan}╰────────────────────────────────────────────────╯${reset}"
+}
 
 pid_is_running() {
     local pid="$1"
@@ -41,6 +69,31 @@ stop_owned_process() {
         kill_process_tree "$pid"
     fi
     rm -f "$file"
+}
+
+cleanup_started_services() {
+    if [ "$STARTED_FRONTEND" -eq 1 ]; then
+        stop_owned_process "前端预览" "$FRONTEND_PID_FILE"
+        STARTED_FRONTEND=0
+    fi
+    if [ "$STARTED_BACKEND" -eq 1 ]; then
+        stop_owned_process "后端预览" "$BACKEND_PID_FILE"
+        STARTED_BACKEND=0
+    fi
+}
+
+handle_exit() {
+    local exit_code=$?
+    trap - EXIT HUP INT TERM
+    cleanup_started_services
+    exit "$exit_code"
+}
+
+handle_signal() {
+    local exit_code="$1"
+    trap - EXIT HUP INT TERM
+    cleanup_started_services
+    exit "$exit_code"
 }
 
 backend_is_ready() {
@@ -91,6 +144,12 @@ if [ "$ACTION" != "start" ]; then
     exit 1
 fi
 
+show_startup_banner
+trap handle_exit EXIT
+trap 'handle_signal 129' HUP
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+
 if frontend_is_ready; then
     echo "开发预览已经在运行，正在打开网页……"
     open "$FRONTEND_URL/"
@@ -128,8 +187,10 @@ if ! backend_is_ready; then
     : > "$BACKEND_LOG"
     nohup go run . >> "$BACKEND_LOG" 2>&1 &
     echo $! > "$BACKEND_PID_FILE"
+    STARTED_BACKEND=1
     if ! wait_until backend_is_ready 60; then
         stop_owned_process "后端预览" "$BACKEND_PID_FILE"
+        STARTED_BACKEND=0
         show_failure "后端预览启动失败。"
         exit 1
     fi
@@ -159,13 +220,30 @@ else
     nohup npm run dev >> "$FRONTEND_LOG" 2>&1 &
 fi
 echo $! > "$FRONTEND_PID_FILE"
+STARTED_FRONTEND=1
 
 if ! wait_until frontend_is_ready 90; then
     stop_owned_process "前端预览" "$FRONTEND_PID_FILE"
+    STARTED_FRONTEND=0
     stop_owned_process "后端预览" "$BACKEND_PID_FILE"
+    STARTED_BACKEND=0
     show_failure "网页预览启动失败。"
     exit 1
 fi
 
 echo "开发预览启动成功：$FRONTEND_URL/"
 open "$FRONTEND_URL/"
+
+while true; do
+    if [ "$STARTED_FRONTEND" -eq 1 ] && ! pid_is_running "$(read_pid "$FRONTEND_PID_FILE")"; then
+        break
+    fi
+    if [ "$STARTED_BACKEND" -eq 1 ] && ! pid_is_running "$(read_pid "$BACKEND_PID_FILE")"; then
+        break
+    fi
+    sleep 2
+done
+
+echo
+echo "检测到开发预览进程已经退出，正在清理……"
+exit 1

@@ -64,7 +64,7 @@ APIMart 点此链接 [https://apimart.ai/register?aff=fWMrEv](https://apimart.ai
 
 ### macOS 开发预览
 
-项目维护时，打开 `Mac用户` 文件夹并双击 `启动开发预览.command`。入口会启动当前源码的前后端服务并打开 `http://localhost:3000`；重复双击会直接打开已运行的页面。需要结束时双击 `停止开发预览.command`。
+项目维护时，打开 `Mac用户` 文件夹并双击 `启动开发预览.command`。入口会显示运行横幅、启动当前源码的前后端服务并打开 `http://localhost:3000`；保持启动终端打开即可持续运行，关闭窗口会自动停止服务并清理进程记录。重复双击会直接打开已运行的页面，也可以使用 `停止开发预览.command` 主动结束。
 
 - 开发预览不使用 Docker，需要本机已安装 Go，以及 Node.js 或 Bun。
 - 首次运行缺少前端依赖时会自动安装，启动日志保存在 `data/dev-preview`。
