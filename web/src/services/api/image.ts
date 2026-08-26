@@ -2,6 +2,7 @@ import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { isAIHubAsyncImageModel, isAIHubChatImageModel } from "@/lib/aihub-models";
+import { getAIHubRequestProfile } from "@/lib/aihub-request-profile";
 import { createDiagnosticRequestSnapshot } from "@/lib/diagnostic-log-safety";
 import { createAIHubChatImageBody, createAIHubImageGenerationBody, extractAIHubChatImageUrls } from "@/services/api/aihub/image";
 import { requestVideoGeneration } from "@/services/api/video";
@@ -610,6 +611,7 @@ async function requestImageGenerationSingle(config: AiConfig & { seedIndex?: num
     }
 
     if (isAIHubConfig(config)) {
+        const endpoint = getAIHubRequestProfile(config.model)?.create.endpoint || "/images/generations";
         const body = createAIHubImageGenerationBody({
             model: config.model,
             prompt: withPromptGuard(config, withSystemPrompt(config, prompt)),
@@ -619,10 +621,10 @@ async function requestImageGenerationSingle(config: AiConfig & { seedIndex?: num
         });
         return requestAndParseImages(
             config,
-            "/images/generations",
+            endpoint,
             body,
             params.timeoutSeconds,
-            () => requestWithTransientRetry(() => withTimeout(params.timeoutSeconds, (signal) => fetch(aiApiUrl(config, "/images/generations"), { method: "POST", headers: aiHeaders(config, "application/json"), body: JSON.stringify(body), signal }))),
+            () => requestWithTransientRetry(() => withTimeout(params.timeoutSeconds, (signal) => fetch(aiApiUrl(config, endpoint), { method: "POST", headers: aiHeaders(config, body instanceof FormData ? undefined : "application/json"), body: body instanceof FormData ? body : JSON.stringify(body), signal }))),
             async (response) => {
                 const payload = (await response.json()) as ImageApiResponse;
                 return { images: parseImagePayload(payload, mime), responseBody: stringifyLogPayload(payload) };
@@ -723,7 +725,7 @@ async function requestAIHubImageEditSingle(config: AiConfig, prompt: string, ref
     const guardedPrompt = withPromptGuard(config, withSystemPrompt(config, prompt));
     const options = { model: config.model, prompt: guardedPrompt, n: params.n, size: params.size, quality: params.quality, references: imageUrls };
     const body = createAIHubImageGenerationBody(options);
-    const endpoint = "/images/edits";
+    const endpoint = getAIHubRequestProfile(config.model)?.create.endpoint || "/images/edits";
     const requestBody: BodyInit = body instanceof FormData ? body : JSON.stringify(body);
 
     return requestAndParseImages(
@@ -735,7 +737,7 @@ async function requestAIHubImageEditSingle(config: AiConfig, prompt: string, ref
             withTimeout(params.timeoutSeconds, (signal) =>
                 fetch(aiApiUrl(config, endpoint), {
                     method: "POST",
-                    headers: aiHeaders(config, "application/json"),
+                    headers: aiHeaders(config, body instanceof FormData ? undefined : "application/json"),
                     body: requestBody,
                     signal,
                 }),
@@ -752,12 +754,13 @@ async function requestAIHubChatImageSingle(config: AiConfig, prompt: string, ref
     const imageUrls = await Promise.all(references.map((image) => resolveAIHubReferenceUrl(config, image)));
     appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "success", title: "AIHub 参考素材传输方式已确认", data: { referenceSource: "aihub-temporary-media", referenceTransport: "aihub-temporary-url", count: imageUrls.length } });
     const body = createAIHubChatImageBody(config.model, withPromptGuard(config, withSystemPrompt(config, prompt)), imageUrls);
+    const endpoint = getAIHubRequestProfile(config.model)?.create.endpoint || "/chat/completions";
     return requestAndParseImages(
         config,
-        "/chat/completions",
+        endpoint,
         body,
         params.timeoutSeconds,
-        () => withTimeout(params.timeoutSeconds, (signal) => fetch(aiApiUrl(config, "/chat/completions"), { method: "POST", headers: aiHeaders(config, "application/json"), body: JSON.stringify(body), signal })),
+        () => withTimeout(params.timeoutSeconds, (signal) => fetch(aiApiUrl(config, endpoint), { method: "POST", headers: aiHeaders(config, "application/json"), body: JSON.stringify(body), signal })),
         async (response) => {
             const payload = await response.json();
             const images = extractAIHubChatImageUrls(payload).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -975,6 +978,8 @@ export async function createCanvasImageTask(config: AiConfig & { seedIndex?: num
 }
 
 function diagnosticImageEndpoint(config: AiConfig, referenceCount: number) {
+    const configured = isAIHubConfig(config) ? getAIHubRequestProfile(config.model)?.create.endpoint : undefined;
+    if (configured) return configured;
     if (isAIHubConfig(config) && isAIHubAsyncImageModel(config.model)) return "/videos";
     if (isAIHubConfig(config) && isAIHubChatImageModel(config.model)) return "/chat/completions";
     if (config.apiMode === "responses") return "/responses";
@@ -1083,7 +1088,7 @@ async function createCanvasImageTaskRequest(config: AiConfig & { seedIndex?: num
     }
     if (isAIHubConfig(config)) {
         const body = createAIHubImageGenerationBody({ model: config.model, prompt: withPromptGuard(config, withSystemPrompt(config, prompt)), n: 1, size: params.size, quality: params.quality });
-        return { method: "POST", headers: jsonHeaders, body: JSON.stringify({ endpoint: "/images/generations", ...meta, request: body }) };
+        return { method: "POST", headers: jsonHeaders, body: JSON.stringify({ endpoint: getAIHubRequestProfile(config.model)?.create.endpoint || "/images/generations", ...meta, request: body }) };
     }
     const body: Record<string, unknown> = {
         model: config.model,

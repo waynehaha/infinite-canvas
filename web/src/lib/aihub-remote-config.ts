@@ -6,7 +6,7 @@ import { buildApiUrl, normalizeLocalChannels, type AiConfig } from "@/stores/use
 export const AIHUB_REMOTE_MANIFEST_URL = "https://aihubcc-config.pages.dev/v1/model-catalog/manifest.json";
 export const AIHUB_REMOTE_CONFIG_STATUS_KEY = "infinite-canvas:aihub-remote-config-status";
 export const AIHUB_REMOTE_CONFIG_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
-const CONFIG_PROTOCOL_VERSION = 2;
+const CONFIG_PROTOCOL_VERSION = 3;
 
 export type AIHubRemoteConfigStatus = {
     checkedAt: string;

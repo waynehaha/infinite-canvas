@@ -12,6 +12,7 @@ registerHooks({
 const { AIHUB_DEFAULT_MODELS, aihubModelCapability } = await import("../src/lib/aihub-models.ts");
 const { AIHUB_MODEL_CAPABILITIES, getAIHubModelCapability, getAIHubVideoImageLimit, normalizeAIHubRangeValue, normalizeAIHubSelectValue } = await import("../src/lib/aihub-model-capabilities.ts");
 const { createAIHubChatImageBody, createAIHubImageGenerationBody, extractAIHubChatImageUrls } = await import("../src/services/api/aihub/image.ts");
+const { aiHubMediaUploadFailureMessage, resolveAIHubReferenceUrl } = await import("../src/services/api/aihub/media.ts");
 const { createAIHubVideoBody } = await import("../src/services/api/aihub/video.ts");
 const { getAIHubImageReferenceError, getAIHubVideoReferenceError, isAIHubVideoPromptRequired } = await import("../src/lib/aihub-reference-policy.ts");
 const { getVideoPromptLengthHint, videoPromptLengthHintText } = await import("../src/lib/video-prompt-length-hint.ts");
@@ -26,6 +27,57 @@ const videoInput = (overrides: Record<string, unknown> = {}) => ({
     videoReferences: [],
     audioReferences: [],
     ...overrides,
+});
+
+test("AIHub 参考素材上传错误会标明具体失败阶段", () => {
+    assert.equal(aiHubMediaUploadFailureMessage("read", new Error("Failed to fetch")), "参考素材读取网络失败：Failed to fetch");
+    assert.equal(aiHubMediaUploadFailureMessage("authorize", new Error("Failed to fetch")), "参考素材上传授权网络失败：Failed to fetch");
+    assert.equal(aiHubMediaUploadFailureMessage("upload", new Error("Failed to fetch")), "参考素材文件直传网络失败：Failed to fetch");
+    assert.equal(aiHubMediaUploadFailureMessage("complete", new Error("Failed to fetch")), "参考素材上传完成确认网络失败：Failed to fetch");
+    assert.equal(aiHubMediaUploadFailureMessage("upload", new Error("HTTP 403")), "参考素材文件直传失败：HTTP 403");
+});
+
+test("AIHub 本地素材上传会保留实际失败步骤", async () => {
+    const originalFetch = globalThis.fetch;
+    const model = "Doubao-Seedance-2.0-480p";
+    const config = {
+        channelMode: "local",
+        model,
+        videoModel: model,
+        activeChannelId: "aihub",
+        videoChannelId: "aihub",
+        baseUrl: "https://aihubcc.cc/v1",
+        apiKey: "test-key",
+        localChannels: [{ id: "aihub", name: "AIHub", baseUrl: "https://aihubcc.cc/v1", apiKey: "test-key", models: [model] }],
+    } as never;
+    const reference = { id: "image-1", name: "reference.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" };
+    try {
+        globalThis.fetch = async (input, init) => {
+            const url = String(input);
+            if (url.startsWith("data:")) return originalFetch(input, init);
+            throw new TypeError("Failed to fetch");
+        };
+        await assert.rejects(resolveAIHubReferenceUrl(config, reference), /参考素材上传授权网络失败/);
+
+        globalThis.fetch = async (input, init) => {
+            const url = String(input);
+            if (url.startsWith("data:")) return originalFetch(input, init);
+            if (url.endsWith("/media/upload")) return Response.json({ data: { media_id: "media-1", upload_url: "https://upload.example.com/file" } });
+            throw new TypeError("Failed to fetch");
+        };
+        await assert.rejects(resolveAIHubReferenceUrl(config, reference), /参考素材文件直传网络失败/);
+
+        globalThis.fetch = async (input, init) => {
+            const url = String(input);
+            if (url.startsWith("data:")) return originalFetch(input, init);
+            if (url.endsWith("/media/upload")) return Response.json({ data: { media_id: "media-1", upload_url: "https://upload.example.com/file" } });
+            if (url === "https://upload.example.com/file") return new Response(null, { status: 200 });
+            throw new TypeError("Failed to fetch");
+        };
+        await assert.rejects(resolveAIHubReferenceUrl(config, reference), /参考素材上传完成确认网络失败/);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
 });
 
 test("默认媒体模型都有能力定义，专用模型能力也可单独维护", () => {

@@ -1,6 +1,7 @@
 import axios from "axios";
 
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { getAIHubRequestProfile } from "@/lib/aihub-request-profile";
 import { USER_LOGIN_ENABLED, shouldUseAccountProxy } from "@/lib/user-auth-mode";
 import { createAIHubMusicBody, extractAIHubAudioSource, isAIHubMusicModel } from "@/services/api/aihub/audio";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
@@ -71,7 +72,8 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string): 
 
     try {
         if (isAIHubConfig(config) && isAIHubMusicModel(model)) {
-            const response = await fetch(aiApiUrl(config, "/chat/completions"), { method: "POST", headers: aiHeaders(config), body: JSON.stringify(createAIHubMusicBody(model, prompt)) });
+            const endpoint = getAIHubRequestProfile(model)?.create.endpoint || "/chat/completions";
+            const response = await fetch(aiApiUrl(config, endpoint), { method: "POST", headers: aiHeaders(config), body: JSON.stringify(createAIHubMusicBody(model, prompt)) });
             if (!response.ok) throw new Error(await readFetchError(response, "音乐生成失败"));
             const payload = await response.json();
             const source = extractAIHubAudioSource(payload);
@@ -115,7 +117,7 @@ export async function createCanvasAudioTask(config: AiConfig, prompt: string, op
     const format = normalizeAudioFormatValue(config.audioFormat);
     const instructions = config.audioInstructions.trim();
     const music = isAIHubConfig(config) && isAIHubMusicModel(model);
-    const endpoint = music ? "/chat/completions" : "/audio/speech";
+    const endpoint = music ? getAIHubRequestProfile(model)?.create.endpoint || "/chat/completions" : "/audio/speech";
     const request = music
         ? createAIHubMusicBody(model, prompt)
         : {

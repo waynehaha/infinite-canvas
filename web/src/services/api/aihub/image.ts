@@ -1,5 +1,6 @@
 import { aihubModelAdapter, isAIHubGeminiImageModel } from "@/lib/aihub-models";
 import { getAIHubImageCapability, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
+import { buildAIHubConfiguredRequestBody, getAIHubRequestProfile } from "@/lib/aihub-request-profile";
 
 export type AIHubImageOptions = {
     model: string;
@@ -12,6 +13,11 @@ export type AIHubImageOptions = {
 
 export function createAIHubImageGenerationBody({ model, prompt, n, size, quality, references = [] }: AIHubImageOptions) {
     const capability = getAIHubImageCapability(model);
+    const profile = getAIHubRequestProfile(model);
+    if (profile) {
+        assertReferenceLimit(capability, references);
+        return buildAIHubConfiguredRequestBody(profile, { model, prompt, count: n, size, quality, references });
+    }
     const body: Record<string, unknown> = { model, prompt };
     const count = Math.min(Math.max(1, n || 1), capability?.count?.max || 1);
     if (count > 1) body.n = count;
@@ -89,6 +95,8 @@ function normalizeAIHubImageSize(model: string, size: string) {
 
 export function createAIHubChatImageBody(model: string, prompt: string, references: string[]) {
     assertReferenceLimit(getAIHubImageCapability(model), references);
+    const profile = getAIHubRequestProfile(model);
+    if (profile) return buildAIHubConfiguredRequestBody(profile, { model, prompt, references });
     const content: string | Array<Record<string, unknown>> = references.length ? [{ type: "text", text: prompt }, ...references.map((url) => ({ type: "image_url", image_url: { url } }))] : prompt;
     return { model, messages: [{ role: "user", content }] };
 }

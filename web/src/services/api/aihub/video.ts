@@ -1,6 +1,6 @@
 import { aihubModelAdapter, isAIHubOmniModel, isAIHubSeedanceModel } from "@/lib/aihub-models";
 import { getAIHubImageCapability, getAIHubVideoCapability, getAIHubVideoImageLimit, normalizeAIHubRangeValue, normalizeAIHubSelectValue, normalizeAIHubVideoAspectRatio } from "@/lib/aihub-model-capabilities";
-import { buildAIHubConfiguredRequestBody, getAIHubRequestProfile } from "@/lib/aihub-request-profile";
+import { buildAIHubConfiguredRequestBody, getAIHubRequestProfile, translateAIHubProtocolError } from "@/lib/aihub-request-profile";
 
 export type AIHubMediaValue = string | File;
 
@@ -249,6 +249,8 @@ function assertConfiguredVideoInput(capability: ReturnType<typeof getAIHubVideoC
 
 export function aiHubVideoFailureMessage(model: string, message: string) {
     const normalized = unwrapAIHubErrorMessage(message);
+    const configured = translateAIHubProtocolError(getAIHubRequestProfile(model), normalized);
+    if (configured.message !== normalized) return configured.message;
     if (isAIHubOmniModel(model) && /bad_reference_image|failed to fetch reference image|reference upload failed/i.test(normalized) && /403|forbidden/i.test(normalized)) {
         return "参考图片的源站拒绝了 AIHub 读取（403），请将图片下载后重新上传再试";
     }

@@ -17,7 +17,7 @@ import { appendDiagnosticEvent } from "@/services/diagnostic-log";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { resolveAIHubReferenceUrl } from "@/services/api/aihub/media";
-import { getAIHubRequestProfile, readAIHubProtocolValue, renderAIHubTaskEndpoint } from "@/lib/aihub-request-profile";
+import { getAIHubRequestProfile, readAIHubProtocolValue, readAIHubTaskProgress, renderAIHubTaskEndpoint } from "@/lib/aihub-request-profile";
 
 export type VideoResponse = {
     id: string;
@@ -138,10 +138,10 @@ export async function requestVideoGeneration(
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] | VideoReferenceInput = [], onProgress?: VideoProgressHandler, options?: string | VideoTaskCreateOptions): Promise<CreatedVideoGenerationTask> {
     const model = config.model || config.videoModel;
-    const endpoint = isAIHubConfig({ ...config, model, videoModel: model }) ? getAIHubRequestProfile(model)?.endpoint || "/videos" : "/videos";
+    const endpoint = isAIHubConfig({ ...config, model, videoModel: model }) ? getAIHubRequestProfile(model)?.create.endpoint || "/videos" : "/videos";
     const systemPrompt = (config.systemPrompts.video || config.systemPrompt).trim();
     const createOptions = normalizeVideoTaskCreateOptions(options);
-    const body = await createVideoRequestBody(config, model, systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt, normalizeVideoReferenceInput(references));
+    const body = await createVideoRequestBody(config, model, systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt, normalizeVideoReferenceInput(references), createOptions.diagnosticTaskId);
     if (isAIHubConfig({ ...config, model, videoModel: model })) {
         const input = normalizeVideoReferenceInput(references);
         const count = input.references.length + input.videoReferences.length + input.audioReferences.length + (input.firstFrame ? 1 : 0) + (input.lastFrame ? 1 : 0);
@@ -257,22 +257,28 @@ export async function pollVideoGenerationTaskStatus(config: AiConfig, task: Vide
 
 async function materializeAIHubVideoTask(config: AiConfig, task: VideoResponse, pollId: string) {
     if (!isAIHubConfig(config)) return task;
+    const model = config.model || config.videoModel;
+    const download = getAIHubRequestProfile(model)?.download;
     const rawUrl = task.video_url || task.url || "";
     if (!rawUrl || /^(?:blob:|data:)/i.test(rawUrl)) return task;
+    if (download?.mode === "direct" && /^https?:/i.test(rawUrl)) return task;
     const contentId = aiHubTaskContentId(rawUrl);
     if (/^https?:/i.test(rawUrl) && !contentId) return task;
     const resultIds = aiHubTaskContentIds(rawUrl, pollId);
-    const result = await requestVideoContentCandidates(resultIds, (id) => fetchAIHubVideoContent(config, id), shouldFallbackVideoContent);
+    const candidateIds = download?.mode === "authenticated-content" ? [pollId] : resultIds;
+    const result = await requestVideoContentCandidates(candidateIds, (id) => fetchAIHubVideoContent(config, model, id), shouldFallbackVideoContent);
     const { response, blob } = result;
     if (!response.ok) throw new VideoRequestError(`视频结果下载失败：${response.status}`, { task, downloadPath: `/videos/${pollId}/content` }, { retryable: shouldFallbackVideoContent(response.status) });
     if (!blob) throw new VideoRequestError("视频结果接口没有返回媒体文件", task, { retryable: true });
-    if (!blob.size || (!blob.type.startsWith("video/") && !blob.type.startsWith("image/"))) throw new VideoRequestError("视频结果接口没有返回媒体文件", { task, contentType: blob.type, bytes: blob.size });
+    const acceptedMimeTypes = download?.acceptedMimeTypes || ["video/", "image/"];
+    if (!blob.size || !acceptedMimeTypes.some((prefix) => blob.type.startsWith(prefix))) throw new VideoRequestError("视频结果接口没有返回媒体文件", { task, contentType: blob.type, bytes: blob.size });
     const stored = await uploadMediaFile(blob, blob.type.startsWith("image/") ? "image" : "video");
     return { ...task, video_url: stored.url, url: stored.url, storageKey: stored.storageKey, storage_key: stored.storageKey, bytes: stored.bytes, mimeType: stored.mimeType, mime_type: stored.mimeType };
 }
 
-function fetchAIHubVideoContent(config: AiConfig, taskId: string) {
-    const downloadUrl = usesAccountProxy(config) ? aiApiUrl(config, `/videos/${encodeURIComponent(taskId)}/content`) : aiHubTaskContentProxyUrl(taskId);
+function fetchAIHubVideoContent(config: AiConfig, model: string, taskId: string) {
+    const endpoint = renderAIHubTaskEndpoint(getAIHubRequestProfile(model)?.download?.endpoint || "/videos/{id}/content", taskId);
+    const downloadUrl = usesAccountProxy(config) ? aiApiUrl(config, endpoint) : endpoint === `/videos/${encodeURIComponent(taskId)}/content` ? aiHubTaskContentProxyUrl(taskId) : aiApiUrl(config, endpoint);
     return withVideoResultTimeout(VIDEO_RESULT_DOWNLOAD_TIMEOUT_MS, async (signal) => {
         const response = await fetch(downloadUrl, { headers: aiHeaders(config), signal });
         return { response, ok: response.ok, status: response.status, blob: response.ok ? await response.blob() : undefined };
@@ -298,9 +304,9 @@ export async function deleteVideoGenerationTask(config: AiConfig, task?: VideoRe
     if (payload.code !== 0) throw new VideoRequestError(payload.msg || payload.message || "删除视频任务失败", payload);
 }
 
-async function createVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>) {
+async function createVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>, diagnosticTaskId?: string) {
     const size = normalizeVideoSize(config.size);
-    if (isAIHubConfig({ ...config, model, videoModel: model })) return createAIHubVideoRequestBody(config, model, prompt, input, config.size);
+    if (isAIHubConfig({ ...config, model, videoModel: model })) return createAIHubVideoRequestBody(config, model, prompt, input, config.size, diagnosticTaskId);
     if (isAgnesVideoModel(model)) {
         const references = input.references;
         const inputReferences = await Promise.all(references.slice(0, 7).map(imageToAgnesReference));
@@ -374,12 +380,12 @@ async function createVideoRequestBody(config: AiConfig, model: string, prompt: s
     return body;
 }
 
-async function createAIHubVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>, size: string | null) {
-    const references = await Promise.all(input.references.map((image) => imageReferenceToAIHubString(config, image)));
-    const firstFrame = input.firstFrame ? await imageReferenceToAIHubString(config, input.firstFrame) : undefined;
-    const lastFrame = input.lastFrame ? await imageReferenceToAIHubString(config, input.lastFrame) : undefined;
-    const videoReferences = await Promise.all(input.videoReferences.map((media) => resolveAIHubReferenceUrl(config, media)));
-    const audioReferences = await Promise.all(input.audioReferences.map((media) => resolveAIHubReferenceUrl(config, media)));
+async function createAIHubVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>, size: string | null, diagnosticTaskId?: string) {
+    const references = await Promise.all(input.references.map((image, index) => resolveAIHubReferenceUrl(config, image, { diagnosticTaskId, kind: "image", index: index + 1 })));
+    const firstFrame = input.firstFrame ? await resolveAIHubReferenceUrl(config, input.firstFrame, { diagnosticTaskId, kind: "first-frame", index: 1 }) : undefined;
+    const lastFrame = input.lastFrame ? await resolveAIHubReferenceUrl(config, input.lastFrame, { diagnosticTaskId, kind: "last-frame", index: 1 }) : undefined;
+    const videoReferences = await Promise.all(input.videoReferences.map((media, index) => resolveAIHubReferenceUrl(config, media, { diagnosticTaskId, kind: "video", index: index + 1 })));
+    const audioReferences = await Promise.all(input.audioReferences.map((media, index) => resolveAIHubReferenceUrl(config, media, { diagnosticTaskId, kind: "audio", index: index + 1 })));
     return createAIHubVideoBody({
         model,
         prompt,
@@ -392,10 +398,6 @@ async function createAIHubVideoRequestBody(config: AiConfig, model: string, prom
         firstFrame,
         lastFrame,
     });
-}
-
-async function imageReferenceToAIHubString(config: AiConfig, image: ReferenceImage) {
-    return resolveAIHubReferenceUrl(config, image);
 }
 
 function isAPIMartKlingV26VideoConfig(config: AiConfig, model: string) {
@@ -808,7 +810,7 @@ function normalizeVideoResponse(value: unknown, model?: string): VideoResponse {
         status: firstString(configuredStatus, record.status, record.state),
         video_url: firstString(configuredUrl, record.video_url, record.videoUrl, record.remixed_from_video_id, record.output_url, record.download_url, firstVideoUrl(record)),
         error: configuredError ? { message: String(configuredError) } : (record.error as { message?: string } | undefined),
-        progress: typeof record.progress === "number" ? record.progress : typeof record.progress === "string" ? parseFloat(record.progress) : undefined,
+        progress: task ? readAIHubTaskProgress(task, record, firstString(configuredStatus, record.status, record.state)) : typeof record.progress === "number" ? record.progress : typeof record.progress === "string" ? parseFloat(record.progress) : undefined,
     };
 }
 

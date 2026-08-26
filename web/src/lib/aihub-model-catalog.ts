@@ -140,33 +140,135 @@ function validateProfileId(id: string) {
 }
 
 function validateRequestProfile(value: unknown, id: string): AIHubRequestProfile {
-    if (!isRecord(value) || value.kind !== "video" || value.method !== "POST" || !["json", "multipart"].includes(String(value.bodyType))) throw new Error(`请求协议 ${id} 的基础信息无效`);
-    validateEndpoint(value.endpoint, id);
-    if (!Array.isArray(value.fields) || !value.fields.length || value.fields.length > 32) throw new Error(`请求协议 ${id} 的字段无效`);
-    const fields = value.fields.map((field) => validateRequestField(field, id));
+    if (!isRecord(value) || !["text", "image", "video", "audio"].includes(String(value.kind)) || !isRecord(value.create) || value.create.method !== "POST" || !["json", "multipart", "chat"].includes(String(value.create.bodyType))) throw new Error(`请求协议 ${id} 的基础信息无效`);
+    validateKnownKeys(value, ["kind", "create", "validation", "response", "task", "download", "errors", "billing"], id);
+    validateKnownKeys(value.create, ["method", "endpoint", "bodyType", "fields"], id);
+    validateEndpoint(value.create.endpoint, id);
+    if (!Array.isArray(value.create.fields) || !value.create.fields.length || value.create.fields.length > 48) throw new Error(`请求协议 ${id} 的字段无效`);
+    const fields = value.create.fields.map((field) => validateRequestField(field, id));
+    const validation = value.validation === undefined ? undefined : validateRequirements(value.validation, id);
+    const response = value.response === undefined ? undefined : validateResponseProtocol(value.response, id);
     const task = value.task === undefined ? undefined : validateTaskProtocol(value.task, id);
-    return { kind: "video", method: "POST", endpoint: value.endpoint as string, bodyType: value.bodyType as "json" | "multipart", fields, ...(task ? { task } : {}) };
+    const download = value.download === undefined ? undefined : validateDownloadProtocol(value.download, id);
+    const errors = value.errors === undefined ? undefined : validateErrorRules(value.errors, id);
+    const billing = value.billing === undefined ? undefined : validateBilling(value.billing, id);
+    return {
+        kind: value.kind as AIHubRequestProfile["kind"],
+        create: { method: "POST", endpoint: value.create.endpoint as string, bodyType: value.create.bodyType as AIHubRequestProfile["create"]["bodyType"], fields },
+        ...(validation ? { validation } : {}),
+        ...(response ? { response } : {}),
+        ...(task ? { task } : {}),
+        ...(download ? { download } : {}),
+        ...(errors ? { errors } : {}),
+        ...(billing ? { billing } : {}),
+    };
 }
 
 function validateRequestField(value: unknown, id: string): AIHubRequestField {
-    const sources = ["model", "prompt", "seconds", "aspectRatio", "resolution", "references", "videoReferences", "audioReferences", "firstFrame", "lastFrame"];
-    const types = ["string", "number", "boolean", "string-array"];
-    if (!isRecord(value) || !sources.includes(String(value.source)) || !types.includes(String(value.type))) throw new Error(`请求协议 ${id} 包含无效字段`);
+    const sources = requestSources();
+    const types = ["string", "number", "boolean", "string-array", "media-array", "chat-messages"];
+    if (!isRecord(value) || !types.includes(String(value.type)) || (value.source === undefined && value.fixed === undefined) || (value.source !== undefined && !sources.includes(String(value.source)))) throw new Error(`请求协议 ${id} 包含无效字段`);
+    validateKnownKeys(value, ["source", "fallbackSources", "target", "type", "required", "omitEmpty", "singleTarget", "arrayMode", "valueMap", "fixed", "default", "conditions"], id);
     validateFieldPath(value.target, id);
     if (value.singleTarget !== undefined) validateFieldPath(value.singleTarget, id);
-    if (value.required !== undefined && typeof value.required !== "boolean") throw new Error(`请求协议 ${id} 的必填规则无效`);
-    if (value.singleTarget !== undefined && value.type !== "string-array") throw new Error(`请求协议 ${id} 的单值字段规则无效`);
+    for (const key of ["required", "omitEmpty"] as const) if (value[key] !== undefined && typeof value[key] !== "boolean") throw new Error(`请求协议 ${id} 的字段规则无效`);
+    if (value.singleTarget !== undefined && !["string-array", "media-array"].includes(String(value.type))) throw new Error(`请求协议 ${id} 的单值字段规则无效`);
+    if (value.arrayMode !== undefined && !["native", "json", "repeat"].includes(String(value.arrayMode))) throw new Error(`请求协议 ${id} 的数组规则无效`);
+    if (value.fallbackSources !== undefined && (!isStringArray(value.fallbackSources) || value.fallbackSources.some((source) => !sources.includes(source)))) throw new Error(`请求协议 ${id} 的候选来源无效`);
+    if (value.fixed !== undefined) validateScalar(value.fixed, id);
+    if (value.default !== undefined) validateScalar(value.default, id);
+    if (value.valueMap !== undefined) {
+        if (!isRecord(value.valueMap) || Object.keys(value.valueMap).length > 50) throw new Error(`请求协议 ${id} 的值映射无效`);
+        Object.values(value.valueMap).forEach((item) => validateScalar(item, id));
+    }
+    if (value.conditions !== undefined) {
+        if (!Array.isArray(value.conditions) || value.conditions.length > 8) throw new Error(`请求协议 ${id} 的条件无效`);
+        for (const condition of value.conditions) {
+            if (!isRecord(condition) || !sources.includes(String(condition.source)) || !["present", "absent", "equals", "not-equals"].includes(String(condition.operator))) throw new Error(`请求协议 ${id} 的条件无效`);
+            validateKnownKeys(condition, ["source", "operator", "value"], id);
+            if (condition.value !== undefined) validateScalar(condition.value, id);
+        }
+    }
     return value as AIHubRequestField;
 }
 
 function validateTaskProtocol(value: unknown, id: string): AIHubTaskProtocol {
     if (!isRecord(value)) throw new Error(`请求协议 ${id} 的任务规则无效`);
+    validateKnownKeys(value, ["pollEndpoint", "idFields", "statusFields", "progressFields", "progressScale", "zeroMeansUnknown", "resultUrlFields", "errorFields", "queuedStatuses", "processingStatuses", "completedStatuses", "failedStatuses"], id);
     validateEndpoint(value.pollEndpoint, id, true);
     for (const key of ["idFields", "statusFields", "resultUrlFields", "errorFields", "completedStatuses", "failedStatuses"] as const) {
         if (!isStringArray(value[key]) || !value[key].length || value[key].length > 16) throw new Error(`请求协议 ${id} 的 ${key} 无效`);
         value[key].forEach((item) => validateFieldPath(item, id));
     }
+    for (const key of ["progressFields", "queuedStatuses", "processingStatuses"] as const) {
+        if (value[key] !== undefined && (!isStringArray(value[key]) || !value[key].length || value[key].length > 16)) throw new Error(`请求协议 ${id} 的 ${key} 无效`);
+        if (key === "progressFields" && isStringArray(value[key])) value[key].forEach((item: string) => validateFieldPath(item, id));
+    }
+    if (value.progressScale !== undefined && (typeof value.progressScale !== "number" || !Number.isFinite(value.progressScale) || value.progressScale <= 0 || value.progressScale > 10000)) throw new Error(`请求协议 ${id} 的进度比例无效`);
+    if (value.zeroMeansUnknown !== undefined && typeof value.zeroMeansUnknown !== "boolean") throw new Error(`请求协议 ${id} 的未知进度规则无效`);
     return value as AIHubTaskProtocol;
+}
+
+function validateRequirements(value: unknown, id: string) {
+    if (!isRecord(value) || !Array.isArray(value.requirements) || value.requirements.length > 24) throw new Error(`请求协议 ${id} 的依赖规则无效`);
+    validateKnownKeys(value, ["requirements"], id);
+    const sources = requestSources();
+    for (const rule of value.requirements) {
+        if (!isRecord(rule) || !["at-least-one", "all-or-none", "requires-any", "mutually-exclusive", "max-items"].includes(String(rule.kind)) || !isStringArray(rule.sources) || !rule.sources.length || rule.sources.some((source) => !sources.includes(source)) || typeof rule.message !== "string" || !rule.message.trim() || rule.message.length > 200) throw new Error(`请求协议 ${id} 的依赖规则无效`);
+        validateKnownKeys(rule, ["kind", "sources", "whenSources", "max", "message"], id);
+        if (rule.whenSources !== undefined && (!isStringArray(rule.whenSources) || !rule.whenSources.length || rule.whenSources.some((source) => !sources.includes(source)))) throw new Error(`请求协议 ${id} 的触发条件无效`);
+        if (rule.kind === "max-items" && (!Number.isInteger(rule.max) || rule.max < 0 || rule.max > 100)) throw new Error(`请求协议 ${id} 的数量限制无效`);
+    }
+    return value as NonNullable<AIHubRequestProfile["validation"]>;
+}
+
+function validateResponseProtocol(value: unknown, id: string) {
+    if (!isRecord(value) || !isStringArray(value.resultFields) || !value.resultFields.length || value.resultFields.length > 16 || !["url", "base64", "markdown", "array"].includes(String(value.resultType))) throw new Error(`请求协议 ${id} 的响应规则无效`);
+    validateKnownKeys(value, ["resultFields", "resultType"], id);
+    value.resultFields.forEach((item) => validateFieldPath(item, id));
+    return value as NonNullable<AIHubRequestProfile["response"]>;
+}
+
+function validateDownloadProtocol(value: unknown, id: string) {
+    if (!isRecord(value) || !["direct", "authenticated-content", "candidates"].includes(String(value.mode))) throw new Error(`请求协议 ${id} 的下载规则无效`);
+    validateKnownKeys(value, ["mode", "endpoint", "idFields", "acceptedMimeTypes"], id);
+    if (value.endpoint !== undefined) validateEndpoint(value.endpoint, id, true);
+    if (value.idFields !== undefined) {
+        if (!isStringArray(value.idFields) || !value.idFields.length || value.idFields.length > 16) throw new Error(`请求协议 ${id} 的下载任务字段无效`);
+        value.idFields.forEach((item) => validateFieldPath(item, id));
+    }
+    if (value.acceptedMimeTypes !== undefined && (!isStringArray(value.acceptedMimeTypes) || !value.acceptedMimeTypes.length || value.acceptedMimeTypes.some((item) => !/^[a-z]+\/[a-z0-9.+*-]*$/i.test(item)))) throw new Error(`请求协议 ${id} 的下载文件类型无效`);
+    return value as NonNullable<AIHubRequestProfile["download"]>;
+}
+
+function validateErrorRules(value: unknown, id: string) {
+    if (!Array.isArray(value) || value.length > 24) throw new Error(`请求协议 ${id} 的错误规则无效`);
+    for (const rule of value) {
+        if (!isRecord(rule) || typeof rule.message !== "string" || !rule.message.trim() || rule.message.length > 300 || (!isStringArray(rule.includesAny) && !isStringArray(rule.includesAll))) throw new Error(`请求协议 ${id} 的错误规则无效`);
+        validateKnownKeys(rule, ["includesAny", "includesAll", "message", "retryable"], id);
+        for (const terms of [rule.includesAny, rule.includesAll]) if (terms !== undefined && (!isStringArray(terms) || !terms.length || terms.length > 12 || terms.some((term) => !term || term.length > 120))) throw new Error(`请求协议 ${id} 的错误匹配词无效`);
+        if (rule.retryable !== undefined && typeof rule.retryable !== "boolean") throw new Error(`请求协议 ${id} 的重试规则无效`);
+    }
+    return value as NonNullable<AIHubRequestProfile["errors"]>;
+}
+
+function validateBilling(value: unknown, id: string) {
+    if (!isRecord(value) || !["request", "second", "token"].includes(String(value.unit)) || typeof value.source !== "string" || !/^https:\/\//i.test(value.source) || value.source.length > 500) throw new Error(`请求协议 ${id} 的计费信息无效`);
+    validateKnownKeys(value, ["unit", "minimum", "source"], id);
+    if (value.minimum !== undefined && (typeof value.minimum !== "number" || !Number.isFinite(value.minimum) || value.minimum < 0)) throw new Error(`请求协议 ${id} 的最低计费无效`);
+    return value as NonNullable<AIHubRequestProfile["billing"]>;
+}
+
+function requestSources() {
+    return ["model", "prompt", "seconds", "aspectRatio", "resolution", "size", "quality", "count", "references", "videoReferences", "audioReferences", "firstFrame", "lastFrame"];
+}
+
+function validateScalar(value: unknown, id: string) {
+    if (!["string", "number", "boolean"].includes(typeof value) || (typeof value === "string" && value.length > 500) || (typeof value === "number" && !Number.isFinite(value))) throw new Error(`请求协议 ${id} 的固定值无效`);
+}
+
+function validateKnownKeys(value: Record<string, unknown>, allowed: string[], id: string) {
+    if (Object.keys(value).some((key) => !allowed.includes(key))) throw new Error(`请求协议 ${id} 包含未允许的配置项`);
 }
 
 function validateEndpoint(value: unknown, id: string, requireId = false) {
@@ -174,7 +276,7 @@ function validateEndpoint(value: unknown, id: string, requireId = false) {
 }
 
 function validateFieldPath(value: unknown, id: string) {
-    if (typeof value !== "string" || !/^[A-Za-z_][A-Za-z0-9_.]{0,79}$/.test(value) || ["__proto__", "prototype", "constructor"].some((part) => value.split(".").includes(part))) throw new Error(`请求协议 ${id} 的字段路径无效`);
+    if (typeof value !== "string" || value.length > 80 || !value.split(".").every((part) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(part) || /^\d+$/.test(part)) || ["__proto__", "prototype", "constructor"].some((part) => value.split(".").includes(part))) throw new Error(`请求协议 ${id} 的字段路径无效`);
 }
 
 function validateMetadata(value: Record<string, unknown>, model: string) {

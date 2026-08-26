@@ -545,6 +545,7 @@ function diagnosticScopeTypeLabel(scopeType: DiagnosticScopeType) {
 
 function classifyDiagnosticFailure(event?: DiagnosticEvent) {
     if (!event) return "当前日志没有发现明确失败步骤";
+    if (["authorize", "upload", "complete"].includes(String(event.data?.step || ""))) return "更可能是参考素材上传网络、跨域或 AIHub 临时媒体服务问题";
     if (["config", "input", "reference"].includes(event.stage)) return "更可能是软件配置、本地素材或提交前校验问题";
     if (event.stage === "polling") return "更可能是任务状态查询链路或上游任务问题";
     if (event.stage === "result") return "更可能是生成结果获取或下载链路问题";

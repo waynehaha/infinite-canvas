@@ -1,9 +1,12 @@
+import { buildAIHubConfiguredRequestBody, getAIHubRequestProfile } from "@/lib/aihub-request-profile";
+
 export function isAIHubMusicModel(model: string) {
     return model.trim().toLowerCase() === "gemini-music";
 }
 
 export function createAIHubMusicBody(model: string, prompt: string) {
-    return { model, messages: [{ role: "user", content: prompt }] };
+    const profile = getAIHubRequestProfile(model);
+    return profile ? buildAIHubConfiguredRequestBody(profile, { model, prompt }) : { model, messages: [{ role: "user", content: prompt }] };
 }
 
 export function extractAIHubAudioSource(payload: unknown) {

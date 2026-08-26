@@ -3,7 +3,6 @@ import { registerHooks } from "node:module";
 import test from "node:test";
 
 import { AIHUB_DEFAULT_MODELS, AIHUB_MODELS_BY_CAPABILITY, aihubModelCapability } from "../src/lib/aihub-models.ts";
-import { createAIHubMusicBody, extractAIHubAudioSource } from "../src/services/api/aihub/audio.ts";
 
 registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -12,6 +11,7 @@ registerHooks({
     },
 });
 
+const { createAIHubMusicBody, extractAIHubAudioSource } = await import("../src/services/api/aihub/audio.ts");
 const { createAIHubImageEditForm, createAIHubImageGenerationBody } = await import("../src/services/api/aihub/image.ts");
 const { aiHubTaskContentId, aiHubTaskContentIds, aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } = await import("../src/services/api/aihub/video.ts");
 

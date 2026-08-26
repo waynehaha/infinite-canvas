@@ -2,6 +2,7 @@ import { resolveMediaUrl } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { channelIdForActiveModel, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
 import { shouldUseAccountProxy } from "@/lib/user-auth-mode";
+import { appendDiagnosticEvent, type DiagnosticReferenceKind } from "@/services/diagnostic-log";
 import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -9,6 +10,16 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 type ReferenceMedia = ReferenceImage | ReferenceVideo | ReferenceAudio;
 type MediaUploadResponse = { success?: boolean; data?: { media_id: string; upload_url: string; upload_headers?: Record<string, string> } };
 type MediaCompleteResponse = { success?: boolean; message?: string; data?: { content_url?: string } };
+type InitializedMediaUpload = { data: { media_id: string; upload_url: string; upload_headers?: Record<string, string> } };
+export type AIHubMediaUploadStage = "read" | "authorize" | "upload" | "complete";
+export type AIHubMediaDiagnosticOptions = { diagnosticTaskId?: string; kind?: DiagnosticReferenceKind; index?: number };
+
+const mediaUploadStageLabels: Record<AIHubMediaUploadStage, string> = {
+    read: "参考素材读取",
+    authorize: "参考素材上传授权",
+    upload: "参考素材文件直传",
+    complete: "参考素材上传完成确认",
+};
 
 function apiUrl(config: AiConfig, path: string) {
     const token = useUserStore.getState().token;
@@ -57,27 +68,111 @@ function mediaType(reference: ReferenceMedia, mime: string) {
     return "video";
 }
 
-export async function resolveAIHubReferenceUrl(config: AiConfig, reference: ReferenceMedia): Promise<string> {
-    const existing = "dataUrl" in reference ? reference.url : reference.url;
-    if (isPublicUrl(existing)) return existing as string;
-    const blob = await referenceBlob(reference);
-    const contentType = blob.type || reference.type || "application/octet-stream";
-    const init = await fetch(apiUrl(config, "/media/upload"), {
-        method: "POST",
-        headers: { ...authHeaders(config), "Content-Type": "application/json" },
-        body: JSON.stringify({ file_name: reference.name || "reference", content_type: contentType, bytes: blob.size }),
+function errorMessage(error: unknown) {
+    return error instanceof Error ? error.message : typeof error === "string" ? error : "未知错误";
+}
+
+export function aiHubMediaUploadFailureMessage(stage: AIHubMediaUploadStage, error: unknown) {
+    const reason = errorMessage(error);
+    const label = mediaUploadStageLabels[stage];
+    if (reason.startsWith(label)) return reason;
+    const network = /failed to fetch|networkerror|load failed|fetch failed/i.test(reason);
+    return `${label}${network ? "网络失败" : "失败"}：${reason}`;
+}
+
+function diagnosticData(options: AIHubMediaDiagnosticOptions, extra: Record<string, unknown> = {}) {
+    return { kind: options.kind || "unknown", index: options.index, ...extra };
+}
+
+function mediaUploadFailure(stage: AIHubMediaUploadStage, error: unknown, options: AIHubMediaDiagnosticOptions, startedAt: number, data: Record<string, unknown> = {}) {
+    const message = aiHubMediaUploadFailureMessage(stage, error);
+    appendDiagnosticEvent(options.diagnosticTaskId, {
+        stage: "reference",
+        status: "failed",
+        title: `${mediaUploadStageLabels[stage]}失败`,
+        detail: message,
+        data: diagnosticData(options, { step: stage, durationMs: Date.now() - startedAt, ...data }),
     });
-    const initialized = await init.json() as MediaUploadResponse;
-    if (!init.ok || !initialized.data?.media_id || !initialized.data.upload_url) throw new Error(initialized.data ? "AIHub 参考素材上传授权失败" : "AIHub 参考素材上传接口不可用");
-    const put = await fetch(initialized.data.upload_url, { method: "PUT", headers: initialized.data.upload_headers, body: blob });
-    if (!put.ok) throw new Error(`参考素材直传失败：${put.status}`);
-    const completed = await fetch(apiUrl(config, `/media/${encodeURIComponent(initialized.data.media_id)}/complete`), { method: "POST", headers: authHeaders(config) });
-    const result = await completed.json() as MediaCompleteResponse;
-    if (!completed.ok || !result.data?.content_url) {
-        const detail = typeof result.message === "string" && result.message.trim() ? result.message.trim() : "AIHub 参考素材上传完成校验失败";
-        throw new Error(`AIHub 参考素材上传完成失败：${detail}`);
+    return new Error(message);
+}
+
+export async function resolveAIHubReferenceUrl(config: AiConfig, reference: ReferenceMedia, options: AIHubMediaDiagnosticOptions = {}): Promise<string> {
+    const existing = "dataUrl" in reference ? reference.url : reference.url;
+    if (isPublicUrl(existing)) {
+        appendDiagnosticEvent(options.diagnosticTaskId, { stage: "reference", status: "info", title: "参考素材使用公网地址", data: diagnosticData(options, { transport: "public-url" }) });
+        return existing as string;
     }
-    return result.data.content_url;
+    appendDiagnosticEvent(options.diagnosticTaskId, { stage: "reference", status: "started", title: "开始处理本地参考素材", data: diagnosticData(options, { transport: "aihub-temporary-media" }) });
+    const readStartedAt = Date.now();
+    let blob: Blob;
+    try {
+        blob = await referenceBlob(reference);
+    } catch (error) {
+        throw mediaUploadFailure("read", error, options, readStartedAt);
+    }
+    const contentType = blob.type || reference.type || "application/octet-stream";
+    const baseData = { bytes: blob.size, mimeType: contentType, mediaType: mediaType(reference, contentType) };
+    appendDiagnosticEvent(options.diagnosticTaskId, { stage: "reference", status: "success", title: "参考素材读取完成", data: diagnosticData(options, { step: "read", durationMs: Date.now() - readStartedAt, ...baseData }) });
+
+    const authorizeStartedAt = Date.now();
+    let authorizeStatus = 0;
+    let initialized: InitializedMediaUpload;
+    try {
+        const response = await fetch(apiUrl(config, "/media/upload"), {
+            method: "POST",
+            headers: { ...authHeaders(config), "Content-Type": "application/json" },
+            body: JSON.stringify({ file_name: reference.name || "reference", content_type: contentType, bytes: blob.size }),
+        });
+        authorizeStatus = response.status;
+        const payload = (await response.json()) as MediaUploadResponse;
+        if (!response.ok || !payload.data?.media_id || !payload.data.upload_url) throw new Error(`HTTP ${response.status}，接口未返回有效上传信息`);
+        initialized = payload as InitializedMediaUpload;
+        appendDiagnosticEvent(options.diagnosticTaskId, {
+            stage: "reference",
+            status: "success",
+            title: "参考素材上传授权成功",
+            data: diagnosticData(options, { step: "authorize", httpStatus: response.status, durationMs: Date.now() - authorizeStartedAt, ...baseData }),
+        });
+    } catch (error) {
+        throw mediaUploadFailure("authorize", error, options, authorizeStartedAt, { httpStatus: authorizeStatus, ...baseData });
+    }
+
+    const uploadStartedAt = Date.now();
+    let uploadStatus = 0;
+    try {
+        const response = await fetch(initialized.data.upload_url, { method: "PUT", headers: initialized.data.upload_headers, body: blob });
+        uploadStatus = response.status;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        appendDiagnosticEvent(options.diagnosticTaskId, {
+            stage: "reference",
+            status: "success",
+            title: "参考素材文件直传成功",
+            data: diagnosticData(options, { step: "upload", httpStatus: response.status, durationMs: Date.now() - uploadStartedAt, ...baseData }),
+        });
+    } catch (error) {
+        throw mediaUploadFailure("upload", error, options, uploadStartedAt, { httpStatus: uploadStatus, ...baseData });
+    }
+
+    const completeStartedAt = Date.now();
+    let completeStatus = 0;
+    try {
+        const response = await fetch(apiUrl(config, `/media/${encodeURIComponent(initialized.data.media_id)}/complete`), { method: "POST", headers: authHeaders(config) });
+        completeStatus = response.status;
+        const result = (await response.json()) as MediaCompleteResponse;
+        if (!response.ok || !result.data?.content_url) {
+            const detail = typeof result.message === "string" && result.message.trim() ? result.message.trim() : `HTTP ${response.status}，接口未返回素材地址`;
+            throw new Error(detail);
+        }
+        appendDiagnosticEvent(options.diagnosticTaskId, {
+            stage: "reference",
+            status: "success",
+            title: "参考素材上传完成",
+            data: diagnosticData(options, { step: "complete", httpStatus: response.status, durationMs: Date.now() - completeStartedAt, ...baseData }),
+        });
+        return result.data.content_url;
+    } catch (error) {
+        throw mediaUploadFailure("complete", error, options, completeStartedAt, { httpStatus: completeStatus, ...baseData });
+    }
 }
 
 export { isPublicUrl, mediaType };

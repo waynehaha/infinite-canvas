@@ -13,7 +13,7 @@ registerHooks({
 const { applyAIHubModelCatalog, buildBuiltInAIHubModelCatalog, parseAIHubModelCatalog } = await import("../src/lib/aihub-model-catalog.ts");
 const { clearAIHubRuntimeCapabilities, getAIHubVideoCapability } = await import("../src/lib/aihub-model-capabilities.ts");
 const { aihubModelAdapter } = await import("../src/lib/aihub-models.ts");
-const { clearAIHubRuntimeRequestProfiles, getAIHubRequestProfile } = await import("../src/lib/aihub-request-profile.ts");
+const { buildAIHubConfiguredRequestBody, clearAIHubRuntimeRequestProfiles, getAIHubRequestProfile, readAIHubTaskProgress } = await import("../src/lib/aihub-request-profile.ts");
 
 test("内置模型配置可以导出并重新导入", () => {
     const catalog = buildBuiltInAIHubModelCatalog();
@@ -53,12 +53,34 @@ test("在线配置可以修改请求字段类型且拒绝不安全协议", () =>
             ...catalog.requestProfiles,
             "seedance-2.0-direct": {
                 ...catalog.requestProfiles["seedance-2.0-direct"],
-                fields: catalog.requestProfiles["seedance-2.0-direct"].fields.map((field) => (field.source === "seconds" ? { ...field, type: "number" } : field)),
+                create: {
+                    ...catalog.requestProfiles["seedance-2.0-direct"].create,
+                    fields: catalog.requestProfiles["seedance-2.0-direct"].create.fields.map((field) => (field.source === "seconds" ? { ...field, type: "number" } : field)),
+                },
             },
         },
     };
     applyAIHubModelCatalog(parseAIHubModelCatalog(JSON.stringify(custom)), false);
-    assert.equal(getAIHubRequestProfile("Doubao-Seedance-2.0-mini-480p")?.fields.find((field) => field.source === "seconds")?.type, "number");
-    assert.throws(() => parseAIHubModelCatalog(JSON.stringify({ ...custom, requestProfiles: { bad: { ...custom.requestProfiles["seedance-2.0-direct"], endpoint: "https://evil.example.com/videos" } } })), /接口地址无效/);
+    assert.equal(getAIHubRequestProfile("Doubao-Seedance-2.0-mini-480p")?.create.fields.find((field) => field.source === "seconds")?.type, "number");
+    assert.throws(() => parseAIHubModelCatalog(JSON.stringify({ ...custom, requestProfiles: { bad: { ...custom.requestProfiles["seedance-2.0-direct"], create: { ...custom.requestProfiles["seedance-2.0-direct"].create, endpoint: "https://evil.example.com/videos" } } } })), /接口地址无效/);
     clearAIHubRuntimeRequestProfiles();
+});
+
+test("在线配置支持条件字段、嵌套进度和未知进度", () => {
+    const profile = buildBuiltInAIHubModelCatalog().requestProfiles["seedance-2.0-direct"];
+    const body = buildAIHubConfiguredRequestBody(profile, { model: "demo", prompt: "test", seconds: 4, aspectRatio: "16:9", references: ["https://example.com/a.png"] });
+    assert.equal(body.seconds, "4");
+    assert.equal(body.image_url, "https://example.com/a.png");
+    assert.equal(readAIHubTaskProgress(profile.task, { data: { progress: 0 } }, "processing"), undefined);
+    assert.equal(readAIHubTaskProgress(profile.task, { data: { progress: 37 } }, "processing"), 37);
+    assert.equal(readAIHubTaskProgress(profile.task, { progress: 0 }, "completed"), 100);
+    assert.equal(readAIHubTaskProgress(profile.task, {}, "completed"), 100);
+});
+
+test("在线配置拒绝脚本、外部接口和危险字段路径", () => {
+    const catalog = buildBuiltInAIHubModelCatalog();
+    const profile = catalog.requestProfiles["seedance-2.0-direct"];
+    assert.throws(() => parseAIHubModelCatalog(JSON.stringify({ ...catalog, requestProfiles: { bad: { ...profile, create: { ...profile.create, endpoint: "https://evil.example.com/videos" } } } })), /接口地址无效/);
+    assert.throws(() => parseAIHubModelCatalog(JSON.stringify({ ...catalog, requestProfiles: { bad: { ...profile, create: { ...profile.create, fields: [{ source: "prompt", target: "__proto__.polluted", type: "string" }] } } } })), /字段路径无效/);
+    assert.throws(() => parseAIHubModelCatalog(JSON.stringify({ ...catalog, requestProfiles: { bad: { ...profile, script: "fetch('https://evil.example.com')" } } })), /请求协议|无效/);
 });
