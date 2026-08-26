@@ -7,10 +7,11 @@ import { App } from "antd";
 
 import { fetchUserConfig } from "@/services/api/user-config";
 import { loadPersistedAIHubModelCatalog } from "@/lib/aihub-model-catalog";
+import { AIHUB_REMOTE_CONFIG_CHECK_INTERVAL, applyAIHubRemoteServiceConfig, fetchAIHubRemoteServiceConfig, fetchAIHubVisibleModels, saveAIHubRemoteConfigFailure } from "@/lib/aihub-remote-config";
 import { defaultUserStorageProvider, saveUserStorageProvider } from "@/services/image-storage";
 import { runDesktopDataProtection } from "@/services/desktop-data-protection";
 import { USER_LOGIN_ENABLED, shouldClearUserSession } from "@/lib/user-auth-mode";
-import { useConfigStore, type AiConfig } from "@/stores/use-config-store";
+import { normalizeLocalChannels, useConfigStore, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
@@ -32,7 +33,28 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         loadPersistedAIHubModelCatalog();
-    }, []);
+        let canceled = false;
+        const sync = async () => {
+            try {
+                const result = await fetchAIHubRemoteServiceConfig();
+                if (canceled || !result.config) return;
+                const current = useConfigStore.getState().config;
+                const aiHubChannel = normalizeLocalChannels(current).find((channel) => channel.id === "aihub");
+                const visibleModels = aiHubChannel ? await fetchAIHubVisibleModels(aiHubChannel.baseUrl || result.config.service.baseUrl, aiHubChannel.apiKey) : null;
+                if (canceled) return;
+                const patch = applyAIHubRemoteServiceConfig(useConfigStore.getState().config, result.config, visibleModels);
+                Object.entries(patch).forEach(([key, value]) => updateConfig(key as keyof AiConfig, value as never));
+            } catch (error) {
+                saveAIHubRemoteConfigFailure(error);
+            }
+        };
+        void sync();
+        const interval = window.setInterval(() => void sync(), AIHUB_REMOTE_CONFIG_CHECK_INTERVAL);
+        return () => {
+            canceled = true;
+            window.clearInterval(interval);
+        };
+    }, [updateConfig]);
 
     useEffect(() => {
         void runDesktopDataProtection()

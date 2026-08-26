@@ -42,8 +42,9 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, frameOption
     const capability = getAIHubVideoCapability(model);
     const aspectRatioCapability = capability?.aspectRatio;
     const durationCapability = capability?.duration;
+    const resolutionCapability = capability?.resolution;
     const capabilityLabel = capability ? [
-        capability.resolution?.label,
+        resolutionCapability?.mode === "fixed" ? resolutionCapability.label : resolutionCapability?.mode === "select" ? resolutionCapability.options.find((item) => item.value === normalizeAIHubSelectValue(resolutionCapability, config.vquality))?.label : "",
         aspectRatioCapability?.options.find((item) => item.value === normalizeAIHubSelectValue(aspectRatioCapability, config.size))?.label,
         !visualOnly && durationCapability?.mode === "fixed" ? durationCapability.label : "",
         !visualOnly && durationCapability?.mode === "select" ? durationCapability.options.find((item) => item.value === normalizeAIHubSelectValue(durationCapability, config.videoSeconds))?.label : "",

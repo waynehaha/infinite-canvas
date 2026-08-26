@@ -4,6 +4,7 @@ import { App, Button, Dropdown, Form, Input, Modal, Segmented, Select, Switch } 
 import { useEffect, useRef, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
+import { AIHubModelCenterModal } from "@/components/aihub-model-center-modal";
 import { fetchImageModels, ModelListRequestError } from "@/services/api/image";
 import { fetchUserConfig, measureUserStorageProvider, syncUserModelConfig, syncUserStorageProvider } from "@/services/api/user-config";
 import { clearStorageConfigCache as clearFileStorageCache } from "@/services/file-storage";
@@ -11,6 +12,7 @@ import { clearStorageConfigCache as clearImageStorageCache, defaultUserStoragePr
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { applyAIHubModelCatalog, buildBuiltInAIHubModelCatalog, clearPersistedAIHubModelCatalog, loadPersistedAIHubModelCatalog, type AIHubModelCatalog } from "@/lib/aihub-model-catalog";
 import { buildAIHubServiceConfig, buildBuiltInAIHubServiceConfig, diffAIHubServiceConfig, parseAIHubServiceConfig, serviceConfigCatalog, type AIHubServiceConfig } from "@/lib/aihub-service-config";
+import { applyAIHubRemoteServiceConfig, fetchAIHubRemoteServiceConfig, fetchAIHubVisibleModels, readAIHubRemoteConfigStatus, saveAIHubRemoteConfigFailure, type AIHubRemoteConfigStatus } from "@/lib/aihub-remote-config";
 import { USER_LOGIN_ENABLED } from "@/lib/user-auth-mode";
 import { filterModelsByCapability, normalizeLocalChannels, useConfigStore, useEffectiveConfig, type AiConfig, type LocalModelChannel, type ModelCapability } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -49,6 +51,9 @@ export function AppConfigModal() {
     const [storageUsageText, setStorageUsageText] = useState("");
     const [modelCatalog, setModelCatalog] = useState<AIHubModelCatalog | null>(null);
     const [serviceConfig, setServiceConfig] = useState<AIHubServiceConfig | null>(null);
+    const [modelCenterOpen, setModelCenterOpen] = useState(false);
+    const [checkingRemoteConfig, setCheckingRemoteConfig] = useState(false);
+    const [remoteConfigStatus, setRemoteConfigStatus] = useState<AIHubRemoteConfigStatus | null>(null);
     const modelCatalogInputRef = useRef<HTMLInputElement>(null);
     const config = useConfigStore((state) => state.config);
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -72,6 +77,7 @@ export function AppConfigModal() {
     useEffect(() => {
         if (!isConfigOpen) return;
         const catalog = loadPersistedAIHubModelCatalog();
+        setRemoteConfigStatus(readAIHubRemoteConfigStatus());
         setModelCatalog(catalog);
         setServiceConfig(
             buildAIHubServiceConfig(catalog || buildBuiltInAIHubModelCatalog(), normalizeLocalChannels(config)[0]?.baseUrl || config.baseUrl, { image: config.imageModel, video: config.videoModel, text: config.textModel, audio: config.audioModel }),
@@ -190,6 +196,32 @@ export function AppConfigModal() {
             message.error(error instanceof Error ? error.message : "读取模型失败");
         } finally {
             setLoadingModels(false);
+        }
+    };
+
+    const checkRemoteConfig = async () => {
+        setCheckingRemoteConfig(true);
+        try {
+            const result = await fetchAIHubRemoteServiceConfig(true);
+            setRemoteConfigStatus(result.status);
+            if (!result.config) {
+                message.warning(result.status.message);
+                return;
+            }
+            const aiHubChannel = normalizeLocalChannels(config).find((channel) => channel.id === "aihub");
+            const visibleModels = aiHubChannel ? await fetchAIHubVisibleModels(aiHubChannel.baseUrl || result.config.service.baseUrl, aiHubChannel.apiKey) : null;
+            const patch = applyAIHubRemoteServiceConfig(config, result.config, visibleModels);
+            Object.entries(patch).forEach(([key, value]) => updateConfig(key as keyof AiConfig, value as never));
+            const catalog = loadPersistedAIHubModelCatalog();
+            setModelCatalog(catalog);
+            setServiceConfig(result.config);
+            message.success(result.status.message);
+        } catch (error) {
+            const status = saveAIHubRemoteConfigFailure(error);
+            setRemoteConfigStatus(status);
+            message.error(status.message);
+        } finally {
+            setCheckingRemoteConfig(false);
         }
     };
 
@@ -362,6 +394,7 @@ export function AppConfigModal() {
     };
 
     return (
+        <>
         <Modal
             title={
                 <div>
@@ -441,6 +474,9 @@ export function AppConfigModal() {
                                     ) : null}
                                     <Button size="small" loading={loadingModels} disabled={Boolean(testingChannelId)} onClick={() => void refreshModels()}>
                                         更新全部模型
+                                    </Button>
+                                    <Button size="small" onClick={() => setModelCenterOpen(true)}>
+                                        模型中心
                                     </Button>
                                     <Dropdown
                                         menu={{
@@ -556,6 +592,15 @@ export function AppConfigModal() {
                 </Form>
             </div>
         </Modal>
+        <AIHubModelCenterModal
+            open={modelCenterOpen}
+            catalog={modelCatalog || buildBuiltInAIHubModelCatalog()}
+            status={remoteConfigStatus}
+            loading={checkingRemoteConfig}
+            onClose={() => setModelCenterOpen(false)}
+            onRefresh={() => void checkRemoteConfig()}
+        />
+        </>
     );
 }
 

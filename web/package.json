@@ -12,6 +12,7 @@
         "test:aihub:live": "node scripts/run-aihub-live-smoke.mjs",
         "capabilities:sync": "node scripts/sync-aihub-model-capabilities.mjs --write",
         "capabilities:check": "node scripts/sync-aihub-model-capabilities.mjs",
+        "aihub-config:export": "node scripts/export-aihub-service-config.mjs",
         "format": "prettier --write .",
         "format:check": "prettier --check ."
     },

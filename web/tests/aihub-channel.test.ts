@@ -33,15 +33,13 @@ test("旧 AIHub 默认列表会升级且保留用户 Key", () => {
     assert.deepEqual(channel.models, AIHUB_DEFAULT_MODELS);
 });
 
-test("上一版 28 个 AIHub 默认模型会补入 Grok 视频模型", () => {
-    const previousModels = AIHUB_DEFAULT_MODELS.filter((model) => !model.startsWith("minimax-h3") && !["grok-imagine-video", "grok-imagine-video-1.5"].includes(model));
-    assert.equal(previousModels.length, 28);
-    const [channel] = normalizeLocalChannels({ localChannels: [{ id: "aihub", name: "AIHub", baseUrl: AIHUB_BASE_URL, apiKey: "", models: previousModels }] });
-    assert.deepEqual(channel.models, AIHUB_DEFAULT_MODELS);
-});
-
-test("上一版 30 个 AIHub 默认模型会补入 MiniMax H3", () => {
-    const previousModels = AIHUB_DEFAULT_MODELS.filter((model) => !model.startsWith("minimax-h3"));
+test("上一版 35 个 AIHub 默认模型会升级为在线模型目录", () => {
+    const previousModels = [
+        "gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gemini-3.6-flash-high", "gemini-3.1-pro-low", "gemini-3-flash", "gemini-2.0-flash-thinking",
+        "gpt-image-2", "gpt-image-2-1k", "gpt-image-2-2k", "gpt-image-2-3.5k", "gemini-image", "gemini-image-pro", "gemini-3.1-flash-image-4k",
+        "omni-fast", "omni-fast-no-water", "omni-fast-v2v", "omni-fast-v2v-no-water", "grok-imagine-video", "grok-imagine-video-1.5", "minimax-h3", "minimax-h3-768p", "minimax-h3-2k", "minimax-h3-pro-768p", "minimax-h3-pro-2k", "Seedance-2.0-mini-480p", "Seedance-2.0-fast-480p", "Seedance-2.0-480p", "Seedance-2.0-mini-720p", "Seedance-2.0-fast-720p", "Seedance-2.0-720p", "veo-clean", "gemini-music",
+    ];
+    assert.equal(previousModels.length, 35);
     const [channel] = normalizeLocalChannels({ localChannels: [{ id: "aihub", name: "AIHub", baseUrl: AIHUB_BASE_URL, apiKey: "", models: previousModels }] });
     assert.deepEqual(channel.models, AIHUB_DEFAULT_MODELS);
 });

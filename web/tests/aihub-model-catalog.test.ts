@@ -18,7 +18,7 @@ test("内置模型配置可以导出并重新导入", () => {
     const catalog = buildBuiltInAIHubModelCatalog();
     const parsed = parseAIHubModelCatalog(JSON.stringify(catalog));
     assert.equal(parsed.schemaVersion, 1);
-    assert.ok(parsed.models.some((entry) => entry.model === "grok-imagine-video-1.5"));
+    assert.ok(parsed.models.some((entry) => entry.model === "grok-imagine-video-6s"));
 });
 
 test("模型配置拒绝密钥和重复模型", () => {
@@ -30,7 +30,7 @@ test("模型配置拒绝密钥和重复模型", () => {
 
 test("导入配置后运行时能力和适配器立即生效", () => {
     const catalog = buildBuiltInAIHubModelCatalog();
-    const grok = catalog.models.find((entry) => entry.model === "grok-imagine-video-1.5");
+    const grok = catalog.models.find((entry) => entry.model === "grok-imagine-video-6s");
     assert.ok(grok?.capability);
     const custom = {
         ...catalog,
@@ -38,6 +38,6 @@ test("导入配置后运行时能力和适配器立即生效", () => {
     };
     applyAIHubModelCatalog(parseAIHubModelCatalog(JSON.stringify(custom)), false);
     assert.equal(getAIHubVideoCapability("grok-imagine-video-2")?.model, "grok-imagine-video-2");
-    assert.equal(aihubModelAdapter("grok-imagine-video-2"), "video-grok");
+    assert.equal(aihubModelAdapter("grok-imagine-video-2"), "video-grok-fixed");
     clearAIHubRuntimeCapabilities();
 });

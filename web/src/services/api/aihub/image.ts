@@ -1,4 +1,4 @@
-import { isAIHubGeminiImageModel } from "@/lib/aihub-models";
+import { aihubModelAdapter, isAIHubGeminiImageModel } from "@/lib/aihub-models";
 import { getAIHubImageCapability, normalizeAIHubSelectValue } from "@/lib/aihub-model-capabilities";
 
 export type AIHubImageOptions = {
@@ -21,7 +21,7 @@ export function createAIHubImageGenerationBody({ model, prompt, n, size, quality
     assertReferenceLimit(capability, references);
     const safeReferences = references.slice(0, imageLimit);
     if (safeReferences.length) {
-        if (isAIHubGeminiImageModel(model)) body.image = safeReferences.length === 1 ? safeReferences[0] : safeReferences;
+        if (isAIHubGeminiImageModel(model) || aihubModelAdapter(model) === "image-reference") body.image = safeReferences.length === 1 ? safeReferences[0] : safeReferences;
         else if (model.toLowerCase() === "gpt-image-2") body.image = safeReferences.length === 1 ? safeReferences[0] : safeReferences;
         else if (model.toLowerCase() === "gpt-image-2-1k") body.reference_image_urls = safeReferences;
     }

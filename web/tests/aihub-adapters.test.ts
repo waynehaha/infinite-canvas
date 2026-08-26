@@ -16,15 +16,15 @@ const { createAIHubImageEditForm, createAIHubImageGenerationBody } = await impor
 const { aiHubTaskContentId, aiHubTaskContentIds, aiHubTaskContentProxyUrl, aiHubVideoFailureMessage, createAIHubVideoBody, resolveAIHubTaskResultUrl } = await import("../src/services/api/aihub/video.ts");
 
 test("AIHub 默认模型完整且不重复", () => {
-    assert.equal(AIHUB_DEFAULT_MODELS.length, 35);
-    assert.equal(new Set(AIHUB_DEFAULT_MODELS).size, 35);
+    assert.equal(AIHUB_DEFAULT_MODELS.length, 44);
+    assert.equal(new Set(AIHUB_DEFAULT_MODELS).size, 44);
     assert.deepEqual(
         Object.fromEntries(Object.entries(AIHUB_MODELS_BY_CAPABILITY).map(([key, models]) => [key, models.length])),
-        { text: 9, image: 7, video: 18, audio: 1 },
+        { text: 6, image: 13, video: 24, audio: 1 },
     );
-    assert.equal(aihubModelCapability("gemini-3.1-flash-lite"), "text");
+    assert.equal(aihubModelCapability("gemini-3.7-flash-high"), "text");
     assert.equal(aihubModelCapability("gemini-3.1-flash-image-4k"), "image");
-    assert.equal(aihubModelCapability("grok-imagine-video-1.5"), "video");
+    assert.equal(aihubModelCapability("grok-imagine-video-6s"), "video");
     assert.equal(aihubModelCapability("minimax-h3-pro-2k"), "video");
 });
 
@@ -113,15 +113,15 @@ test("Seedance 素材边界会提前拦截", () => {
     assert.throws(
         () =>
             createAIHubVideoBody({
-                model: "Seedance-2.0-720p",
+                model: "Doubao-Seedance-2.0-720p",
                 prompt: "生成视频",
                 seconds: "6",
                 aspectRatio: "16:9",
                 resolution: "720p",
                 references: [],
-                videoReferences: ["https://cdn.example.com/a.mp4"],
-                audioReferences: [],
+                videoReferences: [],
+                audioReferences: ["https://cdn.example.com/a.mp3"],
             }),
-        /至少一张主图/,
+        /参考图或参考视频/,
     );
 });

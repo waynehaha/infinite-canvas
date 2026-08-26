@@ -10,6 +10,9 @@ export type AIHubModelCatalogEntry = {
     enabled: boolean;
     adapter: AIHubModelAdapter;
     capability?: AIHubCapability;
+    displayName?: string;
+    description?: string;
+    documentationUrl?: string;
 };
 
 export type AIHubModelCatalog = {
@@ -22,8 +25,8 @@ export type AIHubModelCatalog = {
 
 const adaptersByKind: Record<AIHubModelCapability, AIHubModelAdapter[]> = {
     text: ["text-generic"],
-    image: ["image-generic", "image-gpt", "image-async", "image-chat", "image-gemini"],
-    video: ["video-generic", "video-omni", "video-seedance", "video-grok", "video-h3", "video-clean"],
+    image: ["image-generic", "image-gpt", "image-async", "image-chat", "image-reference", "image-gemini"],
+    video: ["video-generic", "video-omni", "video-seedance", "video-seedance-edit", "video-grok-fixed", "video-grok", "video-h3", "video-clean"],
     audio: ["audio-chat"],
 };
 
@@ -31,12 +34,12 @@ export function buildBuiltInAIHubModelCatalog(): AIHubModelCatalog {
     return {
         schemaVersion: AIHUB_MODEL_CATALOG_SCHEMA_VERSION,
         catalogId: "aihub-model-catalog",
-        updatedAt: "2026-07-31T00:00:00.000Z",
+        updatedAt: "2026-08-25T00:00:00.000Z",
         source: "https://aihubcc.cc/pricing",
         models: AIHUB_DEFAULT_MODELS.map((model) => {
             const capability = getAIHubModelCapability(model);
             const kind = (capability?.kind || inferKind(model)) as AIHubModelCapability;
-            return { model, kind, enabled: true, adapter: aihubModelAdapter(model) || defaultAdapter(kind), ...(capability ? { capability } : {}) };
+            return { model, kind, enabled: true, adapter: aihubModelAdapter(model) || defaultAdapter(kind), ...(capability ? { capability, description: capability.fixedSummary.join(" · ") } : {}), documentationUrl: documentationUrl(model) };
         }),
     };
 }
@@ -107,10 +110,28 @@ function validateEntry(value: unknown, names: Set<string>): AIHubModelCatalogEnt
     names.add(normalized);
     if (!isModelCapability(kind) || typeof value.enabled !== "boolean") throw new Error(`模型 ${model} 的分类或启用状态无效`);
     if (!adaptersByKind[kind].includes(adapter as AIHubModelAdapter)) throw new Error(`模型 ${model} 的适配器与分类不匹配`);
-    if (kind === "text" || kind === "audio") return { model, kind, enabled: value.enabled, adapter: adapter as AIHubModelAdapter };
+    const metadata = validateMetadata(value, model);
+    if (kind === "text" || kind === "audio") return { model, kind, enabled: value.enabled, adapter: adapter as AIHubModelAdapter, ...metadata };
     if (!isRecord(value.capability)) throw new Error(`模型 ${model} 缺少能力配置`);
     const capability = validateCapability(value.capability, model, kind);
-    return { model, kind, enabled: value.enabled, adapter: adapter as AIHubModelAdapter, capability };
+    return { model, kind, enabled: value.enabled, adapter: adapter as AIHubModelAdapter, capability, ...metadata };
+}
+
+function validateMetadata(value: Record<string, unknown>, model: string) {
+    const metadata: Pick<AIHubModelCatalogEntry, "displayName" | "description" | "documentationUrl"> = {};
+    if (value.displayName !== undefined) {
+        if (typeof value.displayName !== "string" || !value.displayName.trim() || value.displayName.length > 120) throw new Error(`模型 ${model} 的显示名称无效`);
+        metadata.displayName = value.displayName.trim();
+    }
+    if (value.description !== undefined) {
+        if (typeof value.description !== "string" || value.description.length > 500) throw new Error(`模型 ${model} 的说明无效`);
+        metadata.description = value.description.trim();
+    }
+    if (value.documentationUrl !== undefined) {
+        if (typeof value.documentationUrl !== "string" || !/^https:\/\//i.test(value.documentationUrl) || value.documentationUrl.length > 500) throw new Error(`模型 ${model} 的文档地址无效`);
+        metadata.documentationUrl = value.documentationUrl;
+    }
+    return metadata;
 }
 
 function validateCapability(value: Record<string, unknown>, model: string, kind: "image" | "video") {
@@ -158,6 +179,36 @@ function inferKind(model: string): AIHubModelCapability {
 
 function defaultAdapter(kind: AIHubModelCapability): AIHubModelAdapter {
     return kind === "video" ? "video-generic" : kind === "image" ? "image-generic" : kind === "audio" ? "audio-chat" : "text-generic";
+}
+
+function documentationUrl(model: string) {
+    const name = model.toLowerCase();
+    const section = name.startsWith("omni-fast")
+        ? "omni"
+        : name.startsWith("minimax-h3")
+          ? "minimax-h3-persec"
+          : name.startsWith("doubao-seedream")
+            ? "seedream"
+            : name.startsWith("doubao-seedance-2.5")
+              ? "seedance25"
+              : name.startsWith("doubao-seedance-2.0")
+                ? "seedance20-direct"
+                : name.startsWith("official-seedance")
+                  ? "seedance-official"
+                  : name === "grok-imagine-video-6s"
+                    ? "grok-6s"
+                    : name.startsWith("grok-imagine-image")
+                      ? "grok-image"
+                      : name.startsWith("gpt-image-2-")
+                        ? "gpt-image-tiers"
+                        : name === "gpt-image-2"
+                          ? "gpt-image"
+                          : name.startsWith("gemini-image")
+                            ? "gemini-image"
+                            : name === "gemini-music"
+                              ? "gemini-music"
+                              : "common";
+    return `https://aihubcc-docs.pages.dev/#${section}`;
 }
 
 function isModelCapability(value: unknown): value is AIHubModelCapability {

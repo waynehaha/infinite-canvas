@@ -51,9 +51,10 @@ test("组装提示词只校验真正引用的素材", () => {
     assert.deepEqual(videoOnly.activeInputs.map((input) => input.nodeId), ["video"]);
 });
 
-test("Seedance 视频或音频参考需要主图", () => {
-    assert.match(buildCanvasVideoReferencePolicy("Seedance-2.0-720p", [video, audio], "").error, /需要至少 1 张主图/);
-    assert.equal(buildCanvasVideoReferencePolicy("Seedance-2.0-720p", [image, video, audio], "").error, "");
+test("Doubao Seedance 参考音频需要搭配图片或视频", () => {
+    assert.match(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-720p", [audio], "").error, /参考图或 1 个参考视频/);
+    assert.equal(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-720p", [video, audio], "").error, "");
+    assert.equal(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-720p", [image, audio], "").error, "");
 });
 
 test("画布图片模式按能力库限制参考图", () => {
@@ -62,16 +63,16 @@ test("画布图片模式按能力库限制参考图", () => {
 });
 
 test("画布 Seedance 首尾帧必须成对且不能混用普通素材", () => {
-    assert.match(buildCanvasVideoReferencePolicy("Seedance-2.0-720p", [image], "", { firstFrameNodeId: "image" }).error, /首尾帧必须同时提供/);
-    assert.equal(buildCanvasVideoReferencePolicy("Seedance-2.0-720p", [image, { ...image, nodeId: "image-2" }], "", { firstFrameNodeId: "image", lastFrameNodeId: "image-2" }).error, "");
-    const withOther = buildCanvasVideoReferencePolicy("Seedance-2.0-720p", [image, { ...image, nodeId: "image-2" }, { ...image, nodeId: "image-3" }], "", { firstFrameNodeId: "image", lastFrameNodeId: "image-2" });
+    assert.match(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-720p", [image], "", { firstFrameNodeId: "image" }).error, /首尾帧必须同时提供/);
+    assert.equal(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-720p", [image, { ...image, nodeId: "image-2" }], "", { firstFrameNodeId: "image", lastFrameNodeId: "image-2" }).error, "");
+    const withOther = buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-720p", [image, { ...image, nodeId: "image-2" }, { ...image, nodeId: "image-3" }], "", { firstFrameNodeId: "image", lastFrameNodeId: "image-2" });
     assert.match(withOther.error, /不能同时添加其他参考素材/);
 });
 
-test("画布按清晰度限制 Grok 1.5 参考图，并校验 H3 自适应比例", () => {
-    const images = [image, { ...image, nodeId: "image-2" }];
-    assert.equal(buildCanvasVideoReferencePolicy("grok-imagine-video-1.5", images, "", { resolution: "720p" }).error, "");
-    assert.match(buildCanvasVideoReferencePolicy("grok-imagine-video-1.5", images, "", { resolution: "1080p" }).error, /最多支持 1 个/);
+test("画布限制 Grok 6 秒参考图数量，并校验 H3 自适应比例", () => {
+    const images = Array.from({ length: 8 }, (_, index) => ({ ...image, nodeId: `image-${index}` }));
+    assert.equal(buildCanvasVideoReferencePolicy("grok-imagine-video-6s", images.slice(0, 7), "").error, "");
+    assert.match(buildCanvasVideoReferencePolicy("grok-imagine-video-6s", images, "").error, /最多支持 7 个/);
     assert.match(buildCanvasVideoReferencePolicy("minimax-h3-2k", [], "提示词", { aspectRatio: "adaptive" }).error, /文生视频不支持自适应比例/);
     assert.equal(buildCanvasVideoReferencePolicy("minimax-h3-2k", [image], "", { aspectRatio: "adaptive" }).error, "");
 });

@@ -98,7 +98,7 @@ export type AIHubAudioCapability = AIHubCapabilityBase & {
 export type AIHubModelCapability = AIHubImageCapability | AIHubVideoCapability | AIHubAudioCapability;
 
 export const AIHUB_CAPABILITY_SOURCE = "https://oq2vmod9er.feishu.cn/docx/KUyVd0qmdotG0Hx2v5SczraGnbc";
-export const AIHUB_CAPABILITY_VERIFIED_AT = "2026-08-12";
+export const AIHUB_CAPABILITY_VERIFIED_AT = "2026-08-25";
 
 const qualityOptions = [
     { value: "auto", label: "自动" },
@@ -121,6 +121,17 @@ const gptImage2SizeOptions = [
     { value: "1824x1024", label: "宽屏", detail: "16:9" },
     { value: "1024x1824", label: "长竖屏", detail: "9:16" },
     { value: "1568x672", label: "宽银幕", detail: "21:9" },
+] as const;
+
+const seedreamSizeOptions = [
+    { value: "2048x2048", label: "方形", detail: "1:1" },
+    { value: "2560x1440", label: "横屏", detail: "16:9" },
+    { value: "1440x2560", label: "竖屏", detail: "9:16" },
+] as const;
+
+const grokImageSizeOptions = [
+    { value: "3:2", label: "横屏", detail: "3:2" },
+    { value: "2:3", label: "竖屏", detail: "2:3" },
 ] as const;
 
 const highResolutionRatios = [
@@ -210,14 +221,14 @@ const imageCapabilities: readonly AIHubImageCapability[] = [
         count: singleImage,
         references: { images: { max: 6, maxTotalBytes: 5 * 1024 * 1024, note: "所有参考图合计不超过 5MB" } },
     },
-    ...(["gpt-image-2-2k", "gpt-image-2-3.5k"] as const).map((model) => ({
+    ...(["gpt-image-2-1k-async", "gpt-image-2-2k", "gpt-image-2-3.5k", "gpt-image-2-4k"] as const).map((model) => ({
         kind: "image" as const,
         model,
-        status: "verified" as const,
+        status: model === "gpt-image-2-4k" ? ("verified" as const) : ("documented" as const),
         verifiedAt,
         source,
         endpoint: "/videos",
-        fixedSummary: [model.endsWith("2k") ? "固定约 2K" : "固定约 3.5K", "单次生成 1 张"],
+        fixedSummary: [model.endsWith("1k-async") ? "固定约 1K，异步生成" : model.endsWith("2k") ? "固定约 2K" : model.endsWith("3.5k") ? "固定约 3.5K" : "固定真 4K", "单次生成 1 张"],
         hidden: ["质量", "自定义宽高", "生成张数"],
         size: { mode: "select" as const, default: "1:1", options: highResolutionRatios },
         count: singleImage,
@@ -235,6 +246,31 @@ const imageCapabilities: readonly AIHubImageCapability[] = [
         count: singleImage,
         references: { images: { max: 5, maxBytes: 5 * 1024 * 1024, note: "每张不超过 5MB" } },
     })),
+    ...(["doubao-seedream-4-5", "doubao-seedream-5-0", "doubao-seedream-5-0-pro"] as const).map((model) => ({
+        kind: "image" as const,
+        model,
+        status: model === "doubao-seedream-5-0" ? ("verified" as const) : ("documented" as const),
+        verifiedAt,
+        source,
+        endpoint: "/images/generations · /images/edits",
+        fixedSummary: [model.endsWith("-pro") ? "建议 2048×2048，Pro 不支持 4K" : "总像素至少 3,686,400，最高支持 4K", "单次固定生成 1 张"],
+        hidden: ["质量", "生成张数"],
+        size: { mode: "select" as const, default: "2048x2048", options: seedreamSizeOptions },
+        count: singleImage,
+        references: { images: { max: 10, maxBytes: 10 * 1024 * 1024, maxWidth: 4096, maxHeight: 4096, note: "支持公网 URL 或 Base64，建议 JPEG/PNG" } },
+    })),
+    {
+        kind: "image",
+        model: "grok-imagine-image-lite",
+        status: "documented",
+        verifiedAt,
+        source,
+        endpoint: "/images/generations",
+        fixedSummary: ["仅支持文生图", "单次生成 1 张"],
+        hidden: ["质量", "生成张数", "参考图"],
+        size: { mode: "select", default: "3:2", options: grokImageSizeOptions },
+        count: singleImage,
+    },
     {
         kind: "image",
         model: "gemini-3.1-flash-image-4k",
@@ -261,7 +297,16 @@ const omniBase = {
     resolution: { mode: "fixed" as const, value: "720p", label: "720p" },
 };
 
-const seedanceModels = ["Seedance-2.0-mini-480p", "Seedance-2.0-fast-480p", "Seedance-2.0-480p", "Seedance-2.0-mini-720p", "Seedance-2.0-fast-720p", "Seedance-2.0-720p"] as const;
+const doubaoSeedanceModels = [
+    "Doubao-Seedance-2.0-mini-480p",
+    "Doubao-Seedance-2.0-mini-720p",
+    "Doubao-Seedance-2.0-fast-480p",
+    "Doubao-Seedance-2.0-fast-720p",
+    "Doubao-Seedance-2.0-480p",
+    "Doubao-Seedance-2.0-720p",
+    "Doubao-Seedance-2.0-1080p",
+] as const;
+const officialSeedanceModels = ["official-Seedance-2.0-fast-480p", "official-Seedance-2.0-fast-720p", "official-Seedance-2.0-480p", "official-Seedance-2.0-720p", "official-Seedance-2.0-1080p"] as const;
 const h3Models = ["minimax-h3", "minimax-h3-768p", "minimax-h3-2k", "minimax-h3-pro-768p", "minimax-h3-pro-2k"] as const;
 
 const videoCapabilities: readonly AIHubVideoCapability[] = [
@@ -280,25 +325,62 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
             videos: { min: 1, max: 2, maxBytes: 8 * 1024 * 1024, maxWidth: 1920, maxHeight: 1080, required: 1, note: "每个不超过 8MB、1920×1080" } as AIHubMediaCapability,
         },
     })),
-    ...seedanceModels.map((model) => ({
+    ...doubaoSeedanceModels.map((model) => ({
         kind: "video" as const,
         model,
         status: "documented" as const,
         verifiedAt,
         source,
         endpoint: "/videos",
-        fixedSummary: [`分辨率由模型锁定为 ${model.toLowerCase().endsWith("480p") ? "480p" : "720p"}`],
+        fixedSummary: [`分辨率由模型锁定为 ${model.toLowerCase().endsWith("480p") ? "480p" : model.toLowerCase().endsWith("1080p") ? "1080p" : "720p"}`, "默认生成音频"],
         hidden: ["分辨率选择", "自适应比例", "生成音频", "水印"],
         aspectRatio: { mode: "select" as const, default: "16:9", options: seedanceRatios },
-        duration: { mode: "range" as const, default: 5, min: 4, max: 15, step: 1, unit: "秒", quick: [4, 5, 6, 8, 10, 12, 15] },
-        resolution: { mode: "fixed" as const, value: model.toLowerCase().endsWith("480p") ? "480p" : "720p", label: model.toLowerCase().endsWith("480p") ? "480p" : "720p" },
+        duration: { mode: "range" as const, default: 4, min: 4, max: 15, step: 1, unit: "秒", quick: [4, 5, 6, 8, 10, 12, 15] },
+        resolution: { mode: "fixed" as const, value: model.toLowerCase().endsWith("480p") ? "480p" : model.toLowerCase().endsWith("1080p") ? "1080p" : "720p", label: model.toLowerCase().endsWith("480p") ? "480p" : model.toLowerCase().endsWith("1080p") ? "1080p" : "720p" },
         references: {
-            images: { max: 9, maxBytes: 30 * 1024 * 1024, minWidth: 300, minHeight: 300, maxLongEdge: 4000, note: "JPEG/PNG/WEBP，每边至少 300px、长边不超过 4000px" },
-            videos: { max: 3, maxBytes: 50 * 1024 * 1024, minDurationMs: 2_000, maxDurationMs: 15_000, maxTotalDurationMs: 15_000, note: "mp4/mov，单条 2–15 秒，多条总时长不超过 15 秒" },
-            audios: { max: 3, note: "使用视频或音频参考时必须同时提供至少 1 张主图" },
+            images: { max: 9, note: "支持公网 URL 或 Base64" },
+            videos: { max: 3, maxDurationMs: 15_000, maxTotalDurationMs: 15_000, note: "仅支持公网 URL，总时长不能超过输出时长" },
+            audios: { max: 3, note: "不能单独使用，需搭配参考图或参考视频" },
             frames: { mode: "pair" as const, exclusive: true },
         },
-        requiresImageWith: ["videos", "audios"] as const,
+        requiresImageWith: ["audios"] as const,
+    })),
+    ...officialSeedanceModels.map((model) => ({
+        kind: "video" as const,
+        model,
+        status: "documented" as const,
+        verifiedAt,
+        source,
+        endpoint: "/videos",
+        fixedSummary: [`分辨率由模型锁定为 ${model.toLowerCase().endsWith("480p") ? "480p" : model.toLowerCase().endsWith("1080p") ? "1080p" : "720p"}`, "参考素材必须使用公网 URL"],
+        promptMaxLength: 5000,
+        hidden: ["分辨率选择", "自适应比例", "生成音频", "水印"],
+        aspectRatio: { mode: "select" as const, default: "16:9", options: seedanceRatios },
+        duration: { mode: "range" as const, default: 4, min: 4, max: 15, step: 1, unit: "秒", quick: [4, 5, 6, 8, 10, 12, 15] },
+        resolution: { mode: "fixed" as const, value: model.toLowerCase().endsWith("480p") ? "480p" : model.toLowerCase().endsWith("1080p") ? "1080p" : "720p", label: model.toLowerCase().endsWith("480p") ? "480p" : model.toLowerCase().endsWith("1080p") ? "1080p" : "720p" },
+        references: {
+            images: { max: 9, maxBytes: 20 * 1024 * 1024, minWidth: 720, minHeight: 720, maxLongEdge: 2160, note: "仅支持公网 URL，JPEG/PNG/WEBP" },
+            videos: { max: 3, minDurationMs: 2_000, maxDurationMs: 15_000, maxTotalDurationMs: 15_000, note: "仅支持公网 URL，mp4/mov" },
+            audios: { max: 3, maxTotalDurationMs: 15_000, note: "仅支持公网 URL" },
+            frames: { mode: "pair" as const, exclusive: true },
+        },
+    })),
+    ...(["Doubao-Seedance-2.5-720p", "Doubao-Seedance-2.5-1080p"] as const).map((model) => ({
+        kind: "video" as const,
+        model,
+        status: "documented" as const,
+        verifiedAt,
+        source,
+        endpoint: "/videos",
+        fixedSummary: [`固定 ${model.endsWith("1080p") ? "1080p" : "720p"}`, "仅支持视频编辑，输出时长和画幅跟随首个参考视频", "默认生成音频"],
+        hidden: ["清晰度", "宽高比", "首尾帧", "水印"],
+        duration: { mode: "range" as const, default: 4, min: 4, max: 30, step: 1, unit: "秒", quick: [4, 5, 6, 8, 10, 15, 30] },
+        resolution: { mode: "fixed" as const, value: model.endsWith("1080p") ? "1080p" : "720p", label: model.endsWith("1080p") ? "1080p" : "720p" },
+        references: {
+            images: { max: 30, note: "支持公网 URL 或 Base64" },
+            videos: { min: 1, max: 10, minDurationMs: 4_000, maxDurationMs: 30_000, required: 1, note: "必须提供，首个视频决定时长与画幅，仅支持公网 URL" } as AIHubMediaCapability,
+            audios: { max: 10, note: "支持公网 URL 或 Base64" },
+        },
     })),
     ...h3Models.map((model) => {
         const baseModel = model === "minimax-h3";
@@ -328,46 +410,18 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
     }),
     {
         kind: "video",
-        model: "veo-clean",
+        model: "grok-imagine-video-6s",
         status: "documented",
         verifiedAt,
         source,
         endpoint: "/videos",
-        fixedSummary: ["只处理一个本地视频文件", "提示词可留空，默认 remove watermark"],
-        promptRequired: false,
-        promptFallback: "remove watermark",
-        hidden: ["清晰度", "尺寸", "宽高比", "时长", "生成音频", "水印", "参考图", "参考音频"],
-        references: { videos: { max: 1, maxBytes: 20 * 1024 * 1024, required: 1, localOnly: true, note: "必须是本地视频文件" } },
-    },
-    {
-        kind: "video" as const,
-        model: "grok-imagine-video",
-        status: "documented" as const,
-        verifiedAt,
-        source,
-        endpoint: "/videos",
-        fixedSummary: ["按次计费", "支持 480p / 720p"],
+        fixedSummary: ["固定 6 秒", "固定 480p", "按次计费"],
         promptLengthHint: 4096,
-        hidden: ["生成音频", "水印", "参考视频", "参考音频"],
-        aspectRatio: { mode: "select" as const, default: "16:9", options: grokRatios },
-        duration: { mode: "range" as const, default: 6, min: 1, max: 15, step: 1, unit: "秒", quick: [6, 10, 15] },
-        resolution: { mode: "select" as const, default: "720p", options: grokResolutions },
-        references: { images: { max: 1, maxBytes: 20 * 1024 * 1024 } },
-    },
-    {
-        kind: "video",
-        model: "grok-imagine-video-1.5",
-        status: "documented",
-        verifiedAt,
-        source,
-        endpoint: "/videos",
-        fixedSummary: ["按次计费", "480p / 720p 最多 7 张参考图", "1080p 仅支持 1 张参考图"],
-        promptLengthHint: 4096,
-        hidden: ["生成音频", "水印", "参考视频", "参考音频"],
-        aspectRatio: { mode: "select", default: "16:9", options: grokRatios },
-        duration: { mode: "range", default: 6, min: 1, max: 15, step: 1, unit: "秒", quick: [6, 10, 15] },
-        resolution: { mode: "select", default: "720p", options: grok15Resolutions },
-        references: { images: { max: 7, required: 1, maxBytes: 20 * 1024 * 1024, maxByResolution: { "1080p": 1 } } },
+        hidden: ["自由时长", "清晰度", "生成音频", "水印", "参考视频", "参考音频", "首尾帧"],
+        aspectRatio: { mode: "select", default: "9:16", options: grokRatios.filter((item) => ["16:9", "9:16", "1:1"].includes(item.value)) },
+        duration: { mode: "fixed", value: 6, label: "6 秒" },
+        resolution: { mode: "fixed", value: "480p", label: "480p" },
+        references: { images: { max: 7, maxBytes: 5 * 1024 * 1024, note: "支持公网 URL、Base64 或本地上传" } },
     },
 ];
 

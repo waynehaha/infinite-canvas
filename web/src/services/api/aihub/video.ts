@@ -50,6 +50,35 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
         };
     }
 
+    if (adapter === "video-grok-fixed") {
+        const sizeByRatio: Record<string, string> = { "9:16": "720x1280", "16:9": "1280x720", "1:1": "960x960" };
+        const imageLimit = capability?.references?.images?.max || 0;
+        if (input.references.length > imageLimit) throw new Error(`${capability?.model || normalizedModel} 最多支持 ${imageLimit} 张参考图`);
+        const references = input.references.slice(0, imageLimit);
+        return {
+            model: input.model,
+            prompt: input.prompt,
+            size: sizeByRatio[aspectRatio] || "720x1280",
+            ...(references.length === 1 ? { image_url: references[0] } : references.length > 1 ? { images: references } : {}),
+        };
+    }
+
+    if (adapter === "video-seedance-edit") {
+        if (!input.videoReferences.length) throw new Error("Seedance 2.5 必须提供至少一个参考视频");
+        assertMediaLimit("参考图", capability?.references?.images, input.references);
+        assertMediaLimit("参考视频", capability?.references?.videos, input.videoReferences);
+        assertMediaLimit("参考音频", capability?.references?.audios, input.audioReferences);
+        if (![...input.videoReferences, ...input.audioReferences].every((value) => typeof value === "string")) throw new Error("Seedance 2.5 的参考视频和音频需要使用公网地址");
+        return {
+            model: input.model,
+            prompt: input.prompt,
+            seconds: Number(seconds),
+            reference_videos: input.videoReferences,
+            ...(input.references.length ? { reference_images: input.references } : {}),
+            ...(input.audioReferences.length ? { reference_audios: input.audioReferences } : {}),
+        };
+    }
+
     if (adapter === "video-h3") {
         const hasFrames = Boolean(input.firstFrame || input.lastFrame);
         if (hasFrames && (!input.firstFrame || !input.lastFrame)) throw new Error("MiniMax H3 首尾帧必须同时提供");
@@ -72,6 +101,30 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
         };
     }
 
+    if (isAIHubSeedanceModel(input.model) && [...input.videoReferences, ...input.audioReferences].every((value) => typeof value === "string")) {
+        const hasFrames = Boolean(input.firstFrame || input.lastFrame);
+        if (hasFrames && (!input.firstFrame || !input.lastFrame)) throw new Error("Seedance 首尾帧模式必须同时提供首帧和尾帧");
+        if (hasFrames && (input.references.length || input.videoReferences.length || input.audioReferences.length)) throw new Error("Seedance 首尾帧模式不能同时添加其他参考素材");
+        assertMediaLimit("参考图", capability?.references?.images, input.references);
+        assertMediaLimit("参考视频", capability?.references?.videos, input.videoReferences);
+        assertMediaLimit("参考音频", capability?.references?.audios, input.audioReferences);
+        if (input.audioReferences.length && !input.references.length && !input.videoReferences.length) throw new Error("Seedance 参考音频需要同时提供参考图或参考视频");
+        const official = normalizedModel.startsWith("official-seedance-");
+        if (official) assertPublicUrls("官方 Seedance 参考素材", [...input.references, ...input.videoReferences, ...input.audioReferences, ...(input.firstFrame ? [input.firstFrame] : []), ...(input.lastFrame ? [input.lastFrame] : [])] as string[]);
+        return {
+            model: input.model,
+            prompt: input.prompt,
+            ...(official ? { duration: Number(seconds) } : { seconds: Number(seconds) }),
+            aspect_ratio: aspectRatio,
+            ...(input.firstFrame ? { first_image_url: input.firstFrame } : {}),
+            ...(input.lastFrame ? { last_image_url: input.lastFrame } : {}),
+            ...(!hasFrames && input.references.length === 1 ? { image_url: input.references[0] } : {}),
+            ...(!hasFrames && input.references.length > 1 ? { reference_images: input.references } : {}),
+            ...(input.videoReferences.length ? { reference_videos: input.videoReferences } : {}),
+            ...(input.audioReferences.length ? { reference_audios: input.audioReferences } : {}),
+        };
+    }
+
     const body = new FormData();
     body.set("model", input.model);
     body.set("prompt", input.prompt);
@@ -90,7 +143,7 @@ export function createAIHubVideoBody(input: AIHubVideoBuildInput) {
     }
     if (imageCapability) assertMediaLimit("参考图", imageCapability.references?.images, input.references);
 
-    if (model === "gpt-image-2-2k" || model === "gpt-image-2-3.5k") {
+    if (["gpt-image-2-1k-async", "gpt-image-2-2k", "gpt-image-2-3.5k", "gpt-image-2-4k"].includes(model)) {
         const maxReferences = imageCapability?.references?.images.max || 0;
         body.set("aspect_ratio", aspectRatio);
         if (input.references[0]) body.set("image_url", input.references[0]);
@@ -208,6 +261,10 @@ function assertMediaLimit(label: string, limit: { max: number; maxBytes?: number
     const sizes = values.map((value) => (value instanceof File ? value.size : dataMediaBytes(value))).filter((value): value is number => typeof value === "number");
     if (limit.maxBytes && sizes.some((size) => size > limit.maxBytes!)) throw new Error(`${label}单个不能超过 ${Math.floor(limit.maxBytes / 1024 / 1024)}MB`);
     if (limit.maxTotalBytes && sizes.reduce((sum, size) => sum + size, 0) > limit.maxTotalBytes) throw new Error(`${label}总大小不能超过 ${Math.floor(limit.maxTotalBytes / 1024 / 1024)}MB`);
+}
+
+function assertPublicUrls(label: string, values: string[]) {
+    if (values.some((value) => !/^https?:\/\//i.test(value))) throw new Error(`${label}必须使用无需登录即可访问的公网 URL`);
 }
 
 function dataMediaBytes(value: string) {

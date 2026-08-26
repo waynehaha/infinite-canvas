@@ -27,7 +27,12 @@ const AIHUB_DEFAULT_CHANNEL: LocalModelChannel = {
     models: AIHUB_DEFAULT_MODELS,
 };
 const AIHUB_LEGACY_DEFAULT_MODELS = ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite", "gpt-image-2", "gpt-image-2-1k", "grok-imagine-image", "omni-fast", "grok-imagine-video", "grok-imagine-video-1.5-preview"];
-const AIHUB_PRE_H3_DEFAULT_MODELS = AIHUB_DEFAULT_MODELS.filter((model) => !model.startsWith("minimax-h3"));
+const AIHUB_LAST_STATIC_DEFAULT_MODELS = [
+    "gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gemini-3.6-flash-high", "gemini-3.1-pro-low", "gemini-3-flash", "gemini-2.0-flash-thinking",
+    "gpt-image-2", "gpt-image-2-1k", "gpt-image-2-2k", "gpt-image-2-3.5k", "gemini-image", "gemini-image-pro", "gemini-3.1-flash-image-4k",
+    "omni-fast", "omni-fast-no-water", "omni-fast-v2v", "omni-fast-v2v-no-water", "grok-imagine-video", "grok-imagine-video-1.5", "minimax-h3", "minimax-h3-768p", "minimax-h3-2k", "minimax-h3-pro-768p", "minimax-h3-pro-2k", "Seedance-2.0-mini-480p", "Seedance-2.0-fast-480p", "Seedance-2.0-480p", "Seedance-2.0-mini-720p", "Seedance-2.0-fast-720p", "Seedance-2.0-720p", "veo-clean", "gemini-music",
+];
+const AIHUB_PRE_H3_DEFAULT_MODELS = AIHUB_LAST_STATIC_DEFAULT_MODELS.filter((model) => !model.startsWith("minimax-h3"));
 const AIHUB_PRIOR_DEFAULT_MODELS = AIHUB_PRE_H3_DEFAULT_MODELS.filter((model) => !["grok-imagine-video", "grok-imagine-video-1.5"].includes(model));
 const AIHUB_PREVIOUS_DEFAULT_MODELS = [...AIHUB_PRIOR_DEFAULT_MODELS, "gpt-5-5", "gpt-5-3", "gpt-5-3-mini", "gpt-5-2"];
 
@@ -479,7 +484,7 @@ export function normalizeLocalChannels(config: Partial<AiConfig>) {
     if (legacyEmptyConfig) return [{ ...AIHUB_DEFAULT_CHANNEL, models: [...AIHUB_DEFAULT_CHANNEL.models] }];
     const normalized = channels.map((channel, index) => {
         const models = Array.isArray(channel.models) ? channel.models.filter(Boolean) : [];
-        const managedAIHub = channel.id === "aihub" && [AIHUB_LEGACY_DEFAULT_MODELS, AIHUB_PRIOR_DEFAULT_MODELS, AIHUB_PREVIOUS_DEFAULT_MODELS, AIHUB_PRE_H3_DEFAULT_MODELS].some((defaults) => sameModelSet(models, defaults));
+        const managedAIHub = channel.id === "aihub" && [AIHUB_LEGACY_DEFAULT_MODELS, AIHUB_PRIOR_DEFAULT_MODELS, AIHUB_PREVIOUS_DEFAULT_MODELS, AIHUB_PRE_H3_DEFAULT_MODELS, AIHUB_LAST_STATIC_DEFAULT_MODELS].some((defaults) => sameModelSet(models, defaults));
         return {
             id: channel.id || `local-${index + 1}`,
             name: typeof channel.name === "string" ? channel.name : `本地渠道 ${index + 1}`,

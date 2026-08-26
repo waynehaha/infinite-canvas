@@ -47,7 +47,9 @@ export function getAIHubVideoReferenceError(model: string, selection: AIHubVideo
     if (frameCapability?.exclusiveWith?.some((kind) => selection[kind].length) && hasFirstFrame && hasLastFrame) {
         errors.push(`首尾帧模式不能同时添加${frameCapability.exclusiveWith.includes("images") ? "普通参考图" : "其他参考素材"}`);
     }
-    if (capability.requiresImageWith?.some((kind) => selection[kind].length) && !selection.images.length && !hasAnyFrame) {
+    if (capability.model.startsWith("Doubao-Seedance-2.0-") && selection.audios.length && !selection.images.length && !selection.videos.length) {
+        errors.push(`${capability.model} 使用参考音频时需要至少 1 张参考图或 1 个参考视频`);
+    } else if (!capability.model.startsWith("Doubao-Seedance-2.0-") && capability.requiresImageWith?.some((kind) => selection[kind].length) && !selection.images.length && !hasAnyFrame) {
         errors.push(`${capability.model} 使用视频或音频参考时需要至少 1 张主图`);
     }
     if (selection.aspectRatio === "adaptive" && !selection.images.length && !selection.videos.length && !hasAnyFrame) {
