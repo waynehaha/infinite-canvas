@@ -488,7 +488,7 @@ export function normalizeLocalChannels(config: Partial<AiConfig>) {
         return {
             id: channel.id || `local-${index + 1}`,
             name: typeof channel.name === "string" ? channel.name : `本地渠道 ${index + 1}`,
-            baseUrl: channel.baseUrl || "",
+            baseUrl: channel.id === "aihub" ? AIHUB_BASE_URL : channel.baseUrl || "",
             apiKey: channel.apiKey || "",
             models: managedAIHub ? [...AIHUB_DEFAULT_MODELS] : models,
         };

@@ -445,7 +445,10 @@ export function AppConfigModal() {
                                     <div key={channel.id} className="space-y-2 rounded-md bg-stone-50 p-2 dark:bg-stone-900">
                                         <div className="grid gap-2 md:grid-cols-[160px_minmax(0,1fr)_minmax(0,1fr)_auto]">
                                             <Input value={channel.name} placeholder="渠道名称" onChange={(event) => patchLocalChannel(channel.id, { name: event.target.value })} />
-                                            <Input value={channel.baseUrl} placeholder="Base URL" onChange={(event) => patchLocalChannel(channel.id, { baseUrl: event.target.value })} />
+                                            <div>
+                                                <Input value={channel.baseUrl} placeholder="Base URL" readOnly={channel.id === "aihub"} onChange={(event) => patchLocalChannel(channel.id, { baseUrl: event.target.value })} />
+                                                {channel.id === "aihub" ? <div className="mt-1 text-xs text-stone-500">AIHub 标准接口地址，系统自动维护</div> : null}
+                                            </div>
                                             <Input.Password value={channel.apiKey} placeholder="API Key" onChange={(event) => patchLocalChannel(channel.id, { apiKey: event.target.value })} />
                                             <div className="flex gap-2">
                                                 <Button size="small" loading={testingChannelId === channel.id} disabled={loadingModels || Boolean(testingChannelId && testingChannelId !== channel.id)} onClick={() => void testLocalChannel(channel)}>

@@ -80,6 +80,60 @@ test("AIHub 本地素材上传会保留实际失败步骤", async () => {
     }
 });
 
+test("AIHub 素材上传会为旧 Base URL 补齐 v1", async () => {
+    const originalFetch = globalThis.fetch;
+    const requestedUrls: string[] = [];
+    const model = "omni-fast";
+    const config = {
+        channelMode: "local",
+        model,
+        videoModel: model,
+        activeChannelId: "aihub",
+        videoChannelId: "aihub",
+        baseUrl: "https://aihubcc.cc",
+        apiKey: "test-key",
+        localChannels: [{ id: "aihub", name: "AIHub", baseUrl: "https://aihubcc.cc", apiKey: "test-key", models: [model] }],
+    } as never;
+    const reference = { id: "image-1", name: "reference.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" };
+    try {
+        globalThis.fetch = async (input, init) => {
+            const url = String(input);
+            if (url.startsWith("data:")) return originalFetch(input, init);
+            requestedUrls.push(url);
+            if (url === "https://aihubcc.cc/v1/media/upload") return Response.json({ data: { media_id: "media-1", upload_url: "https://upload.example.com/file" } });
+            if (url === "https://upload.example.com/file") return new Response(null, { status: 200 });
+            if (url === "https://aihubcc.cc/v1/media/media-1/complete") return Response.json({ data: { content_url: "https://cdn.example.com/reference.png" } });
+            throw new Error(`未预期的请求：${url}`);
+        };
+        assert.equal(await resolveAIHubReferenceUrl(config, reference), "https://cdn.example.com/reference.png");
+        assert.deepEqual(requestedUrls, ["https://aihubcc.cc/v1/media/upload", "https://upload.example.com/file", "https://aihubcc.cc/v1/media/media-1/complete"]);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("AIHub 素材接口返回网页时会提示检查 Base URL", async () => {
+    const originalFetch = globalThis.fetch;
+    const model = "omni-fast";
+    const config = {
+        channelMode: "local",
+        model,
+        videoModel: model,
+        activeChannelId: "custom-aihub",
+        videoChannelId: "custom-aihub",
+        baseUrl: "https://example.com/v1",
+        apiKey: "test-key",
+        localChannels: [{ id: "custom-aihub", name: "AIHub 代理", baseUrl: "https://example.com/v1", apiKey: "test-key", models: [model] }],
+    } as never;
+    const reference = { id: "image-1", name: "reference.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" };
+    try {
+        globalThis.fetch = async (input, init) => String(input).startsWith("data:") ? originalFetch(input, init) : new Response("<!doctype html><html></html>", { status: 200, headers: { "Content-Type": "text/html" } });
+        await assert.rejects(resolveAIHubReferenceUrl(config, reference), /请确认 AIHub Base URL 为 https:\/\/aihubcc\.cc\/v1/);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
 test("默认媒体模型都有能力定义，专用模型能力也可单独维护", () => {
     for (const capability of AIHUB_MODEL_CAPABILITIES) {
         assert.ok(capability.source.startsWith("https://"));

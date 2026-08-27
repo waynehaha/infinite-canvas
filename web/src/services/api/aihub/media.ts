@@ -1,6 +1,6 @@
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
-import { channelIdForActiveModel, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
+import { AIHUB_BASE_URL, buildApiUrl, channelIdForActiveModel, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
 import { shouldUseAccountProxy } from "@/lib/user-auth-mode";
 import { appendDiagnosticEvent, type DiagnosticReferenceKind } from "@/services/diagnostic-log";
 import { useUserStore } from "@/stores/use-user-store";
@@ -24,8 +24,17 @@ const mediaUploadStageLabels: Record<AIHubMediaUploadStage, string> = {
 function apiUrl(config: AiConfig, path: string) {
     const token = useUserStore.getState().token;
     if (shouldUseAccountProxy(config.channelMode, Boolean(token))) return `/api/v1${path}`;
-    const base = (localChannelForActiveModel(config)?.baseUrl || config.baseUrl).replace(/\/+$/, "");
-    return `${base}${path}`;
+    return buildApiUrl(localChannelForActiveModel(config)?.baseUrl || config.baseUrl, path);
+}
+
+async function parseAIHubJson<T>(response: Response): Promise<T> {
+    const text = await response.text();
+    try {
+        return JSON.parse(text) as T;
+    } catch {
+        if (/^\s*</.test(text)) throw new Error(`接口返回了网页内容，请确认 AIHub Base URL 为 ${AIHUB_BASE_URL}`);
+        throw new Error(`接口返回的数据格式不正确（HTTP ${response.status}）`);
+    }
 }
 
 function authHeaders(config: AiConfig) {
@@ -124,7 +133,7 @@ export async function resolveAIHubReferenceUrl(config: AiConfig, reference: Refe
             body: JSON.stringify({ file_name: reference.name || "reference", content_type: contentType, bytes: blob.size }),
         });
         authorizeStatus = response.status;
-        const payload = (await response.json()) as MediaUploadResponse;
+        const payload = await parseAIHubJson<MediaUploadResponse>(response);
         if (!response.ok || !payload.data?.media_id || !payload.data.upload_url) throw new Error(`HTTP ${response.status}，接口未返回有效上传信息`);
         initialized = payload as InitializedMediaUpload;
         appendDiagnosticEvent(options.diagnosticTaskId, {
@@ -158,7 +167,7 @@ export async function resolveAIHubReferenceUrl(config: AiConfig, reference: Refe
     try {
         const response = await fetch(apiUrl(config, `/media/${encodeURIComponent(initialized.data.media_id)}/complete`), { method: "POST", headers: authHeaders(config) });
         completeStatus = response.status;
-        const result = (await response.json()) as MediaCompleteResponse;
+        const result = await parseAIHubJson<MediaCompleteResponse>(response);
         if (!response.ok || !result.data?.content_url) {
             const detail = typeof result.message === "string" && result.message.trim() ? result.message.trim() : `HTTP ${response.status}，接口未返回素材地址`;
             throw new Error(detail);

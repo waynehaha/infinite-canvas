@@ -26,6 +26,12 @@ test("空的旧配置会升级为 AIHub 默认渠道", () => {
     assert.deepEqual(normalizeLocalChannels({ baseUrl: "https://api.openai.com", apiKey: "", models: [] }), [{ id: "aihub", name: "AIHub", baseUrl: AIHUB_BASE_URL, apiKey: "", models: AIHUB_DEFAULT_MODELS }]);
 });
 
+test("AIHub 旧地址会自动恢复为标准接口地址", () => {
+    const [channel] = normalizeLocalChannels({ localChannels: [{ id: "aihub", name: "AIHub", baseUrl: "https://aihubcc.cc", apiKey: "secret-placeholder", models: ["omni-fast"] }] });
+    assert.equal(channel.baseUrl, AIHUB_BASE_URL);
+    assert.equal(channel.apiKey, "secret-placeholder");
+});
+
 test("旧 AIHub 默认列表会升级且保留用户 Key", () => {
     const legacyModels = ["gemini-3.5-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite", "gpt-image-2", "gpt-image-2-1k", "grok-imagine-image", "omni-fast", "grok-imagine-video", "grok-imagine-video-1.5-preview"];
     const [channel] = normalizeLocalChannels({ localChannels: [{ id: "aihub", name: "AIHub", baseUrl: AIHUB_BASE_URL, apiKey: "secret-placeholder", models: legacyModels }] });

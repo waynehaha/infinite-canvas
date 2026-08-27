@@ -36,6 +36,7 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 ## AIHub 默认渠道
 
+- AIHub 默认渠道固定使用 `https://aihubcc.cc/v1`，缺少 `/v1` 的旧配置会自动修正；测试连接与本地参考素材上传共用同一地址规则，接口误返回网页时会直接提示检查 Base URL。
 - Seedream 4.5/5.0/5.0 Pro 的文生图、单参考图和多参考图统一使用 `/images/generations` JSON 协议；本地渠道和登录后云端任务使用相同请求结构。
 - `gpt-image-2` 图生图恢复为合法 multipart 文件上传，最多 6 张、参考图合计不超过 5MB；不再把临时图片网址作为 JSON 发送到 `/images/edits`。
 - Gemini 图片请求不再发送文档未公开的生成数量和质量字段，并恢复方形、横屏、竖屏方向选择。
