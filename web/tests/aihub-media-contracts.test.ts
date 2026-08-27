@@ -11,7 +11,7 @@ registerHooks({
 
 const { AIHUB_DEFAULT_MODELS, aihubModelCapability } = await import("../src/lib/aihub-models.ts");
 const { AIHUB_MODEL_CAPABILITIES, getAIHubModelCapability, getAIHubVideoImageLimit, normalizeAIHubRangeValue, normalizeAIHubSelectValue } = await import("../src/lib/aihub-model-capabilities.ts");
-const { createAIHubChatImageBody, createAIHubImageGenerationBody, extractAIHubChatImageUrls } = await import("../src/services/api/aihub/image.ts");
+const { createAIHubChatImageBody, createAIHubImageEditForm, createAIHubImageGenerationBody, extractAIHubChatImageUrls, getAIHubImageRequestEndpoint, isAIHubMultipartImageEdit } = await import("../src/services/api/aihub/image.ts");
 const { aiHubMediaUploadFailureMessage, resolveAIHubReferenceUrl } = await import("../src/services/api/aihub/media.ts");
 const { createAIHubVideoBody } = await import("../src/services/api/aihub/video.ts");
 const { assertAIHubVideoReferences, getAIHubImageReferenceError, getAIHubVideoReferenceError, isAIHubVideoPromptRequired } = await import("../src/lib/aihub-reference-policy.ts");
@@ -181,6 +181,32 @@ test("无效枚举和越界数值会回落到能力库允许范围", () => {
 
 test("不支持参考图的图片模型会在请求前拦截", () => {
     assert.throws(() => createAIHubImageGenerationBody({ model: "grok-imagine-image-lite", prompt: "生成", references: ["https://cdn.example.com/a.png"] }), /不支持参考图/);
+});
+
+test("Seedream 文生图和多参考图统一使用 generations JSON", () => {
+    assert.equal(getAIHubImageRequestEndpoint("doubao-seedream-4-5", 0), "/images/generations");
+    assert.equal(getAIHubImageRequestEndpoint("doubao-seedream-4-5", 2), "/images/generations");
+    assert.deepEqual(
+        createAIHubImageGenerationBody({ model: "doubao-seedream-4-5", prompt: "融合", n: 4, size: "2048x2048", quality: "high", references: ["https://cdn.example.com/a.png", "https://cdn.example.com/b.png"] }),
+        { model: "doubao-seedream-4-5", prompt: "融合", size: "2048x2048", image: ["https://cdn.example.com/a.png", "https://cdn.example.com/b.png"] },
+    );
+});
+
+test("GPT Image 2 图生图统一使用 multipart edits", () => {
+    assert.equal(isAIHubMultipartImageEdit("gpt-image-2", 2), true);
+    assert.equal(getAIHubImageRequestEndpoint("gpt-image-2", 2), "/images/edits");
+    const files = [new File([new Uint8Array([1])], "a.png", { type: "image/png" }), new File([new Uint8Array([2])], "b.png", { type: "image/png" })];
+    const body = createAIHubImageEditForm({ model: "gpt-image-2", prompt: "融合", n: 1, size: "1024x1024", quality: "high" }, files);
+    assert.equal(body.get("model"), "gpt-image-2");
+    assert.equal(body.getAll("image").length, 2);
+});
+
+test("Gemini 图片协议不会发送未公开的数量和质量字段", () => {
+    assert.deepEqual(createAIHubImageGenerationBody({ model: "gemini-image", prompt: "生成", n: 4, size: "1024x1824", quality: "high" }), {
+        model: "gemini-image",
+        prompt: "生成",
+        size: "1024x1824",
+    });
 });
 
 test("Gemini 4K Chat 图片模型只发送文本并拒绝未开放的参考图", () => {

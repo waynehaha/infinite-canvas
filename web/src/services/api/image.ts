@@ -4,7 +4,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { isAIHubAsyncImageModel, isAIHubChatImageModel } from "@/lib/aihub-models";
 import { getAIHubRequestProfile } from "@/lib/aihub-request-profile";
 import { createDiagnosticRequestSnapshot } from "@/lib/diagnostic-log-safety";
-import { createAIHubChatImageBody, createAIHubImageGenerationBody, extractAIHubChatImageUrls } from "@/services/api/aihub/image";
+import { createAIHubChatImageBody, createAIHubImageEditForm, createAIHubImageGenerationBody, extractAIHubChatImageUrls, getAIHubImageRequestEndpoint, isAIHubMultipartImageEdit } from "@/services/api/aihub/image";
 import { requestVideoGeneration } from "@/services/api/video";
 import { imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
 import { buildApiUrl, channelIdForActiveModel, isAIHubConfig, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
@@ -611,7 +611,7 @@ async function requestImageGenerationSingle(config: AiConfig & { seedIndex?: num
     }
 
     if (isAIHubConfig(config)) {
-        const endpoint = getAIHubRequestProfile(config.model)?.create.endpoint || "/images/generations";
+        const endpoint = getAIHubImageRequestEndpoint(config.model);
         const body = createAIHubImageGenerationBody({
             model: config.model,
             prompt: withPromptGuard(config, withSystemPrompt(config, prompt)),
@@ -720,12 +720,30 @@ async function requestImageEditSingle(config: AiConfig, prompt: string, referenc
 }
 
 async function requestAIHubImageEditSingle(config: AiConfig, prompt: string, references: ReferenceImage[], params: ImageRequestParams, diagnosticTaskId?: string): Promise<GeneratedImage[]> {
+    const guardedPrompt = withPromptGuard(config, withSystemPrompt(config, prompt));
+    if (isAIHubMultipartImageEdit(config.model, references.length)) {
+        const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+        const body = createAIHubImageEditForm({ model: config.model, prompt: guardedPrompt, n: params.n, size: params.size, quality: params.quality }, files);
+        const endpoint = getAIHubImageRequestEndpoint(config.model, references.length);
+        return requestAndParseImages(
+            config,
+            endpoint,
+            summarizeFormData(body),
+            params.timeoutSeconds,
+            () => withTimeout(params.timeoutSeconds, (signal) => fetch(aiApiUrl(config, endpoint), { method: "POST", headers: aiHeaders(config), body, signal })),
+            async (response) => {
+                const payload = (await response.json()) as ImageApiResponse;
+                return { images: parseImagePayload(payload, IMAGE_MIME), responseBody: stringifyLogPayload(payload) };
+            },
+            diagnosticTaskId,
+            body,
+        );
+    }
     const imageUrls = await Promise.all(references.map((image) => resolveAIHubReferenceUrl(config, image)));
     appendDiagnosticEvent(diagnosticTaskId, { stage: "reference", status: "success", title: "AIHub 参考素材传输方式已确认", data: { referenceSource: "aihub-temporary-media", referenceTransport: "aihub-temporary-url", count: imageUrls.length } });
-    const guardedPrompt = withPromptGuard(config, withSystemPrompt(config, prompt));
     const options = { model: config.model, prompt: guardedPrompt, n: params.n, size: params.size, quality: params.quality, references: imageUrls };
     const body = createAIHubImageGenerationBody(options);
-    const endpoint = getAIHubRequestProfile(config.model)?.create.endpoint || "/images/edits";
+    const endpoint = getAIHubImageRequestEndpoint(config.model, references.length);
     const requestBody: BodyInit = body instanceof FormData ? body : JSON.stringify(body);
 
     return requestAndParseImages(
@@ -978,7 +996,7 @@ export async function createCanvasImageTask(config: AiConfig & { seedIndex?: num
 }
 
 function diagnosticImageEndpoint(config: AiConfig, referenceCount: number) {
-    const configured = isAIHubConfig(config) ? getAIHubRequestProfile(config.model)?.create.endpoint : undefined;
+    const configured = isAIHubConfig(config) ? getAIHubImageRequestEndpoint(config.model, referenceCount) : undefined;
     if (configured) return configured;
     if (isAIHubConfig(config) && isAIHubAsyncImageModel(config.model)) return "/videos";
     if (isAIHubConfig(config) && isAIHubChatImageModel(config.model)) return "/chat/completions";
@@ -1009,9 +1027,21 @@ async function createCanvasImageTaskRequest(config: AiConfig & { seedIndex?: num
     const meta = { nodeId: options.nodeId || "", source: options.source || "canvas", sourceId: options.sourceId || "", clientTaskId: options.clientTaskId || "", prompt, channelId: taskChannelId };
     if (references.length && isAIHubConfig(config)) {
         const promptText = withPromptGuard(config, withSystemPrompt(config, prompt));
+        if (isAIHubMultipartImageEdit(config.model, references.length)) {
+            const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+            const formData = createAIHubImageEditForm({ model: config.model, prompt: promptText, n: params.n, size: params.size, quality: params.quality }, files);
+            formData.set("_canvas_endpoint", getAIHubImageRequestEndpoint(config.model, references.length));
+            formData.set("_canvas_source", meta.source);
+            formData.set("_canvas_node_id", meta.nodeId);
+            formData.set("_canvas_source_id", meta.sourceId);
+            formData.set("_canvas_task_id", meta.clientTaskId);
+            formData.set("_canvas_prompt", meta.prompt);
+            if (meta.channelId) formData.set("_canvas_channel_id", meta.channelId);
+            return { method: "POST", headers: tokenHeaders, body: formData };
+        }
         const imageUrls = await Promise.all(references.map((image) => resolveAIHubReferenceUrl(config, image)));
         const options = { model: config.model, prompt: promptText, n: params.n, size: params.size, quality: params.quality, references: imageUrls };
-        return { method: "POST", headers: jsonHeaders, body: JSON.stringify({ endpoint: "/images/edits", ...meta, request: createAIHubImageGenerationBody(options) }) };
+        return { method: "POST", headers: jsonHeaders, body: JSON.stringify({ endpoint: getAIHubImageRequestEndpoint(config.model, references.length), ...meta, request: createAIHubImageGenerationBody(options) }) };
     }
     if (references.length && isAgnesImageModel(config.model)) {
         const imageUrls = await Promise.all(
@@ -1088,7 +1118,7 @@ async function createCanvasImageTaskRequest(config: AiConfig & { seedIndex?: num
     }
     if (isAIHubConfig(config)) {
         const body = createAIHubImageGenerationBody({ model: config.model, prompt: withPromptGuard(config, withSystemPrompt(config, prompt)), n: 1, size: params.size, quality: params.quality });
-        return { method: "POST", headers: jsonHeaders, body: JSON.stringify({ endpoint: getAIHubRequestProfile(config.model)?.create.endpoint || "/images/generations", ...meta, request: body }) };
+        return { method: "POST", headers: jsonHeaders, body: JSON.stringify({ endpoint: getAIHubImageRequestEndpoint(config.model), ...meta, request: body }) };
     }
     const body: Record<string, unknown> = {
         model: config.model,

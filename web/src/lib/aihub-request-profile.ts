@@ -118,6 +118,86 @@ const standardVideoTask: AIHubTaskProtocol = {
 };
 
 export const AIHUB_BUILT_IN_REQUEST_PROFILES: Record<string, AIHubRequestProfile> = {
+    "image-gemini-json": {
+        kind: "image",
+        create: {
+            method: "POST",
+            endpoint: "/images/generations",
+            bodyType: "json",
+            fields: [
+                { source: "model", target: "model", type: "string", required: true },
+                { source: "prompt", target: "prompt", type: "string", required: true },
+                { source: "size", target: "size", type: "string" },
+                { source: "references", target: "image", singleTarget: "image", type: "string-array" },
+            ],
+        },
+        response: { resultFields: ["data", "images", "output"], resultType: "array" },
+        billing: { unit: "request", source: "https://aihubcc.cc/pricing" },
+    },
+    "image-seedream-json": {
+        kind: "image",
+        create: {
+            method: "POST",
+            endpoint: "/images/generations",
+            bodyType: "json",
+            fields: [
+                { source: "model", target: "model", type: "string", required: true },
+                { source: "prompt", target: "prompt", type: "string", required: true },
+                { source: "size", target: "size", type: "string" },
+                { source: "references", target: "image", singleTarget: "image", type: "string-array" },
+            ],
+        },
+        response: { resultFields: ["data", "images", "output"], resultType: "array" },
+        billing: { unit: "request", source: "https://aihubcc.cc/pricing" },
+    },
+    "image-grok-lite-json": {
+        kind: "image",
+        create: {
+            method: "POST",
+            endpoint: "/images/generations",
+            bodyType: "json",
+            fields: [
+                { source: "model", target: "model", type: "string", required: true },
+                { source: "prompt", target: "prompt", type: "string", required: true },
+                { source: "size", target: "size", type: "string" },
+            ],
+        },
+        response: { resultFields: ["data", "images", "output"], resultType: "array" },
+        billing: { unit: "request", source: "https://aihubcc.cc/pricing" },
+    },
+    "image-gpt-json": {
+        kind: "image",
+        create: {
+            method: "POST",
+            endpoint: "/images/generations",
+            bodyType: "json",
+            fields: [
+                { source: "model", target: "model", type: "string", required: true },
+                { source: "prompt", target: "prompt", type: "string", required: true },
+                { source: "count", target: "n", type: "number" },
+                { source: "size", target: "size", type: "string" },
+                { source: "quality", target: "quality", type: "string", conditions: [{ source: "quality", operator: "not-equals", value: "auto" }] },
+            ],
+        },
+        response: { resultFields: ["data", "images", "output"], resultType: "array" },
+        billing: { unit: "request", source: "https://aihubcc.cc/pricing" },
+    },
+    "image-gpt-1k-json": {
+        kind: "image",
+        create: {
+            method: "POST",
+            endpoint: "/images/generations",
+            bodyType: "json",
+            fields: [
+                { source: "model", target: "model", type: "string", required: true },
+                { source: "prompt", target: "prompt", type: "string", required: true },
+                { source: "size", target: "size", type: "string" },
+                { source: "references", target: "reference_image_urls", singleTarget: "image_url", type: "string-array" },
+            ],
+        },
+        response: { resultFields: ["data", "images", "output"], resultType: "array" },
+        billing: { unit: "request", source: "https://aihubcc.cc/pricing" },
+    },
     "seedance-2.0-direct": {
         kind: "video",
         create: {
@@ -144,8 +224,8 @@ export const AIHUB_BUILT_IN_REQUEST_PROFILES: Record<string, AIHubRequestProfile
     },
 };
 
-export const AIHUB_BUILT_IN_REQUEST_PROFILE_ASSIGNMENTS: Record<string, string> = Object.fromEntries(
-    [
+export const AIHUB_BUILT_IN_REQUEST_PROFILE_ASSIGNMENTS: Record<string, string> = {
+    ...Object.fromEntries([
         "Doubao-Seedance-2.0-mini-480p",
         "Doubao-Seedance-2.0-mini-720p",
         "Doubao-Seedance-2.0-fast-480p",
@@ -153,8 +233,16 @@ export const AIHUB_BUILT_IN_REQUEST_PROFILE_ASSIGNMENTS: Record<string, string> 
         "Doubao-Seedance-2.0-480p",
         "Doubao-Seedance-2.0-720p",
         "Doubao-Seedance-2.0-1080p",
-    ].map((model) => [model.toLowerCase(), "seedance-2.0-direct"]),
-);
+    ].map((model) => [model.toLowerCase(), "seedance-2.0-direct"])),
+    "gemini-image": "image-gemini-json",
+    "gemini-image-pro": "image-gemini-json",
+    "doubao-seedream-4-5": "image-seedream-json",
+    "doubao-seedream-5-0": "image-seedream-json",
+    "doubao-seedream-5-0-pro": "image-seedream-json",
+    "grok-imagine-image-lite": "image-grok-lite-json",
+    "gpt-image-2": "image-gpt-json",
+    "gpt-image-2-1k": "image-gpt-1k-json",
+};
 
 let runtimeProfiles = new Map<string, AIHubRequestProfile>();
 let runtimeAssignments = new Map<string, string>();

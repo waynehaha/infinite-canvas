@@ -21,6 +21,8 @@ test("内置模型配置可以导出并重新导入", () => {
     assert.equal(parsed.schemaVersion, 1);
     assert.ok(parsed.models.some((entry) => entry.model === "grok-imagine-video-6s"));
     assert.equal(parsed.models.find((entry) => entry.model === "Doubao-Seedance-2.0-mini-480p")?.requestProfile, "seedance-2.0-direct");
+    assert.equal(parsed.models.find((entry) => entry.model === "doubao-seedream-4-5")?.requestProfile, "image-seedream-json");
+    assert.equal(parsed.models.find((entry) => entry.model === "gpt-image-2")?.requestProfile, "image-gpt-json");
     assert.equal(parsed.models.find((entry) => entry.model === "Doubao-Seedance-2.0-mini-480p")?.capability?.references?.videos?.maxShortEdge, 480);
 });
 

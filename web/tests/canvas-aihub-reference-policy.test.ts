@@ -72,7 +72,9 @@ test("画布重试会在修改原节点前识别 Seedance 480p 素材错误", ()
 
 test("画布图片模式按能力库限制参考图", () => {
     assert.match(buildCanvasImageReferencePolicy("gemini-3.1-flash-image-4k", [image], "").error, /不支持参考图/);
-    assert.match(buildCanvasImageReferencePolicy("gpt-image-2", [image, { ...image, nodeId: "image-2" }], "").error, /最多支持 1 个/);
+    const references = Array.from({ length: 7 }, (_, index) => ({ ...image, nodeId: `image-${index}` }));
+    assert.equal(buildCanvasImageReferencePolicy("gpt-image-2", references.slice(0, 6), "").error, "");
+    assert.match(buildCanvasImageReferencePolicy("gpt-image-2", references, "").error, /最多支持 6 个/);
 });
 
 test("画布 Seedance 首尾帧必须成对且不能混用普通素材", () => {

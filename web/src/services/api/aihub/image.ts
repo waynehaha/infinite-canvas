@@ -11,12 +11,24 @@ export type AIHubImageOptions = {
     references?: string[];
 };
 
+export function isAIHubMultipartImageEdit(model: string, referenceCount: number) {
+    return referenceCount > 0 && model.trim().toLowerCase() === "gpt-image-2";
+}
+
+export function getAIHubImageRequestEndpoint(model: string, referenceCount = 0) {
+    if (isAIHubMultipartImageEdit(model, referenceCount)) return "/images/edits";
+    return getAIHubRequestProfile(model)?.create.endpoint || (referenceCount ? "/images/edits" : "/images/generations");
+}
+
 export function createAIHubImageGenerationBody({ model, prompt, n, size, quality, references = [] }: AIHubImageOptions) {
     const capability = getAIHubImageCapability(model);
     const profile = getAIHubRequestProfile(model);
     if (profile) {
         assertReferenceLimit(capability, references);
-        return buildAIHubConfiguredRequestBody(profile, { model, prompt, count: n, size, quality, references });
+        const count = Math.min(Math.max(1, n || 1), capability?.count?.max || 1);
+        const normalizedSize = capability?.size ? normalizeAIHubSelectValue(capability.size, normalizeAIHubImageSize(model, size || capability.size.default)) : undefined;
+        const normalizedQuality = capability?.quality && quality && quality !== "auto" ? normalizeAIHubSelectValue(capability.quality, quality) : undefined;
+        return buildAIHubConfiguredRequestBody(profile, { model, prompt, count, size: normalizedSize, quality: normalizedQuality, references });
     }
     const body: Record<string, unknown> = { model, prompt };
     const count = Math.min(Math.max(1, n || 1), capability?.count?.max || 1);

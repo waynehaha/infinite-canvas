@@ -207,7 +207,7 @@ const imageCapabilities: readonly AIHubImageCapability[] = [
         quality: { mode: "select", default: "auto", options: qualityOptions },
         size: { mode: "select", default: "auto", options: gptImage2SizeOptions },
         count: imageCountFour,
-        references: { images: { max: 1, note: "图生图使用 /images/edits" } },
+        references: { images: { max: 6, maxTotalBytes: 5 * 1024 * 1024, maxWidth: 2048, maxHeight: 2048, note: "图生图使用 /images/edits multipart，所有参考图合计不超过 5MB" } },
     },
     {
         kind: "image",
@@ -238,12 +238,13 @@ const imageCapabilities: readonly AIHubImageCapability[] = [
     ...(["gemini-image", "gemini-image-pro"] as const).map((model) => ({
         kind: "image" as const,
         model,
-        status: "verified" as const,
+        status: model === "gemini-image" ? ("verified" as const) : ("documented" as const),
         verifiedAt,
         source,
         endpoint: "/images/generations",
-        fixedSummary: ["尺寸由模型决定", "已验证单次生成 1 张"],
-        hidden: ["质量", "自定义宽高", "宽高比", "生成张数"],
+        fixedSummary: ["支持方形、横屏和竖屏方向", "已验证单次生成 1 张"],
+        hidden: ["质量", "自定义宽高", "生成张数"],
+        size: { mode: "select" as const, default: "1024x1024", options: [{ value: "1024x1024", label: "方形", detail: "1:1" }, { value: "1824x1024", label: "横屏", detail: "16:9" }, { value: "1024x1824", label: "竖屏", detail: "9:16" }] },
         count: singleImage,
         references: { images: { max: 5, maxBytes: 5 * 1024 * 1024, note: "每张不超过 5MB" } },
     })),
@@ -253,7 +254,7 @@ const imageCapabilities: readonly AIHubImageCapability[] = [
         status: model === "doubao-seedream-5-0" ? ("verified" as const) : ("documented" as const),
         verifiedAt,
         source,
-        endpoint: "/images/generations · /images/edits",
+        endpoint: "/images/generations",
         fixedSummary: [model.endsWith("-pro") ? "建议 2048×2048，Pro 不支持 4K" : "总像素至少 3,686,400，最高支持 4K", "单次固定生成 1 张"],
         hidden: ["质量", "生成张数"],
         size: { mode: "select" as const, default: "2048x2048", options: seedreamSizeOptions },
@@ -319,6 +320,7 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
     ...(["omni-fast-v2v", "omni-fast-v2v-no-water"] as const).map((model) => ({
         ...omniBase,
         model,
+        status: "documented" as const,
         fixedSummary: [...omniBase.fixedSummary, "图片+视频混合为实验能力，请避开写实真人、知名角色和品牌素材"],
         hidden: [...omniBase.hidden, "首尾帧", "参考音频"],
         references: {
@@ -436,7 +438,7 @@ const audioCapabilities: readonly AIHubAudioCapability[] = [
     {
         kind: "audio",
         model: "gemini-music",
-        status: "verified",
+        status: "documented",
         verifiedAt,
         source,
         endpoint: "/chat/completions",
