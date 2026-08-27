@@ -318,7 +318,11 @@ function validateControl(value: unknown, model: string, label: string) {
 function validateReferences(value: unknown, model: string) {
     if (!isRecord(value)) throw new Error(`模型 ${model} 的参考素材配置无效`);
     for (const limit of Object.values(value)) {
-        if (isRecord(limit) && limit.max !== undefined && (typeof limit.max !== "number" || limit.max < 0 || limit.max > 100)) throw new Error(`模型 ${model} 的参考素材数量无效`);
+        if (!isRecord(limit)) continue;
+        if (limit.max !== undefined && (typeof limit.max !== "number" || limit.max < 0 || limit.max > 100)) throw new Error(`模型 ${model} 的参考素材数量无效`);
+        for (const key of ["maxBytes", "maxTotalBytes", "minWidth", "minHeight", "maxWidth", "maxHeight", "maxLongEdge", "maxShortEdge", "minDurationMs", "maxDurationMs", "maxTotalDurationMs"] as const) {
+            if (limit[key] !== undefined && (typeof limit[key] !== "number" || !Number.isFinite(limit[key]) || limit[key] <= 0)) throw new Error(`模型 ${model} 的参考素材限制无效`);
+        }
     }
 }
 

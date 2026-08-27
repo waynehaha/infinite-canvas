@@ -1,5 +1,5 @@
 import { getAIHubImageCapability, getAIHubVideoCapability } from "@/lib/aihub-model-capabilities";
-import { getAIHubImageReferenceError, getAIHubVideoReferenceError } from "@/lib/aihub-reference-policy";
+import { getAIHubImageReferenceError, getAIHubVideoReferenceError, type AIHubReferenceLike } from "@/lib/aihub-reference-policy";
 import { supportsVideoFrameReferences } from "@/lib/video-model-capabilities";
 import type { NodeGenerationInput } from "../components/canvas-node-generation";
 
@@ -89,6 +89,14 @@ export function resolveCanvasVideoImageReferences<T>(model: string, references: 
         references: imageReferencesEnabled ? limitedReferences : [],
         firstFrame: frameReferencesEnabled ? firstFrame || null : null,
         lastFrame: frameReferencesEnabled ? lastFrame || null : null,
+    };
+}
+
+export function resolveCanvasRetryVideoReferences<TImage extends AIHubReferenceLike, TVideo extends AIHubReferenceLike, TAudio extends AIHubReferenceLike>(model: string, images: TImage[], videos: TVideo[], audios: TAudio[], firstFrame?: TImage | null, lastFrame?: TImage | null) {
+    const resolved = resolveCanvasVideoImageReferences(model, images, firstFrame, lastFrame);
+    return {
+        ...resolved,
+        error: getAIHubVideoReferenceError(model, { images: resolved.references, videos, audios, firstFrame: resolved.firstFrame, lastFrame: resolved.lastFrame }),
     };
 }
 

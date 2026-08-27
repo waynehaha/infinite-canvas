@@ -59,6 +59,11 @@ export function getAIHubVideoReferenceError(model: string, selection: AIHubVideo
     return errors.join("；");
 }
 
+export function assertAIHubVideoReferences(model: string, selection: AIHubVideoReferenceSelection) {
+    const error = getAIHubVideoReferenceError(model, selection);
+    if (error) throw new Error(error);
+}
+
 export function isAIHubVideoPromptRequired(model: string) {
     return getAIHubVideoCapability(model)?.promptRequired !== false;
 }
@@ -80,6 +85,7 @@ function mediaError(model: string, label: string, values: AIHubReferenceLike[], 
         if (limit.maxWidth && value.width && value.width > limit.maxWidth) return `${label}宽度不能超过 ${limit.maxWidth}px`;
         if (limit.maxHeight && value.height && value.height > limit.maxHeight) return `${label}高度不能超过 ${limit.maxHeight}px`;
         if (limit.maxLongEdge && value.width && value.height && Math.max(value.width, value.height) > limit.maxLongEdge) return `${label}长边不能超过 ${limit.maxLongEdge}px`;
+        if (limit.maxShortEdge && value.width && value.height && Math.min(value.width, value.height) > limit.maxShortEdge) return `${label}分辨率不能高于 ${limit.maxShortEdge}p（当前为 ${value.width}×${value.height}）`;
         if (limit.minDurationMs && value.durationMs && value.durationMs < limit.minDurationMs) return `${label}时长不能少于 ${formatSeconds(limit.minDurationMs)}`;
         if (limit.maxDurationMs && value.durationMs && value.durationMs > limit.maxDurationMs) return `${label}时长不能超过 ${formatSeconds(limit.maxDurationMs)}`;
     }

@@ -58,7 +58,7 @@ import { CanvasToolbar } from "../components/canvas-toolbar";
 import { AssetPickerModal, type AssetPickerTab } from "../components/asset-picker-modal";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { CANVAS_ASSET_DRAG_TYPE, CanvasSidePanel } from "../components/canvas-side-panel";
-import { resolveCanvasVideoImageReferences } from "../utils/canvas-generation-reference-policy";
+import { resolveCanvasRetryVideoReferences, resolveCanvasVideoImageReferences } from "../utils/canvas-generation-reference-policy";
 import { DEFAULT_CANVAS_AGENT_PANEL, DEFAULT_CANVAS_SIDE_PANEL, useCanvasStore } from "../stores/use-canvas-store";
 import { buildCanvasResourceReferences, buildNodeMentionReferences, getGenerationResourceNodes } from "../utils/canvas-resource-references";
 import { buildCanvasAgentContext } from "../agent/canvas-agent-context";
@@ -3652,6 +3652,15 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             });
 
             const videoGenerationConfig = node.type === CanvasNodeType.Video ? (context ? withCanvasVideoAdvancedConfig(generationConfig, context) : generationConfig) : null;
+            const retryVideoReferences = videoGenerationConfig
+                ? resolveCanvasRetryVideoReferences(videoGenerationConfig.model, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], context?.firstFrame, context?.lastFrame)
+                : null;
+            if (retryVideoReferences?.error) {
+                appendDiagnosticEvent(retryDiagnosticTaskId, { stage: "reference", status: "failed", title: "参考视频不符合模型要求", detail: retryVideoReferences.error });
+                finishDiagnosticTask(retryDiagnosticTaskId, "failed", `${retryVideoReferences.error}，尚未发送请求`);
+                message.error(retryVideoReferences.error);
+                return;
+            }
             if (videoGenerationConfig && !(await confirmVideoPromptLength(videoGenerationConfig.model, requestPrompt))) {
                 finishDiagnosticTask(retryDiagnosticTaskId, "failed", "用户返回修改提示词，尚未发送请求");
                 return;
@@ -3698,8 +3707,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    if (!videoGenerationConfig) return;
-                    const { references, firstFrame, lastFrame } = resolveCanvasVideoImageReferences(videoGenerationConfig.model, retryImages, context?.firstFrame, context?.lastFrame);
+                    if (!videoGenerationConfig || !retryVideoReferences) return;
+                    const { references, firstFrame, lastFrame } = retryVideoReferences;
                     const created = await createVideoGenerationTask(videoGenerationConfig, requestPrompt, { references, firstFrame, lastFrame, videoReferences: context?.referenceVideos || [], audioReferences: context?.referenceAudios || [] }, undefined, {
                         clientTaskId: retryVideoTaskId,
                         source: "canvas",

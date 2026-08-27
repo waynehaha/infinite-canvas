@@ -14,7 +14,7 @@ const { AIHUB_MODEL_CAPABILITIES, getAIHubModelCapability, getAIHubVideoImageLim
 const { createAIHubChatImageBody, createAIHubImageGenerationBody, extractAIHubChatImageUrls } = await import("../src/services/api/aihub/image.ts");
 const { aiHubMediaUploadFailureMessage, resolveAIHubReferenceUrl } = await import("../src/services/api/aihub/media.ts");
 const { createAIHubVideoBody } = await import("../src/services/api/aihub/video.ts");
-const { getAIHubImageReferenceError, getAIHubVideoReferenceError, isAIHubVideoPromptRequired } = await import("../src/lib/aihub-reference-policy.ts");
+const { assertAIHubVideoReferences, getAIHubImageReferenceError, getAIHubVideoReferenceError, isAIHubVideoPromptRequired } = await import("../src/lib/aihub-reference-policy.ts");
 const { getVideoPromptLengthHint, videoPromptLengthHintText } = await import("../src/lib/video-prompt-length-hint.ts");
 
 const videoInput = (overrides: Record<string, unknown> = {}) => ({
@@ -260,6 +260,17 @@ test("共享视频规则覆盖 Seedance 素材依赖和 Omni V2V 规格", () => 
     assert.match(getAIHubVideoReferenceError("Doubao-Seedance-2.0-720p", { images: [{ dataUrl: "other" }], videos: [], audios: [], firstFrame: { dataUrl: "first" }, lastFrame: { dataUrl: "last" } }), /不能同时添加其他参考素材/);
     assert.match(getAIHubVideoReferenceError("Doubao-Seedance-2.0-720p", { images: [], videos: [], audios: [{ durationMs: 3_000 }] }), /参考图或 1 个参考视频/);
     assert.match(getAIHubVideoReferenceError("omni-fast-v2v", { images: [], videos: [{ width: 1921, height: 1080 }], audios: [] }), /宽度不能超过 1920px/);
+});
+
+test("Seedance 480p 在提交前拦截高分辨率参考视频", () => {
+    const accepted = [{ width: 854, height: 480 }, { width: 480, height: 854 }];
+    for (const model of ["Doubao-Seedance-2.0-mini-480p", "Doubao-Seedance-2.0-480p"]) {
+        for (const video of accepted) assert.equal(getAIHubVideoReferenceError(model, { images: [], videos: [video], audios: [] }), "");
+        assert.match(getAIHubVideoReferenceError(model, { images: [], videos: [{ width: 1920, height: 1080 }], audios: [] }), /不能高于 480p.*1920×1080/);
+        assert.equal(getAIHubVideoReferenceError(model, { images: [], videos: [{ url: "https://cdn.example.com/video.mp4" }], audios: [] }), "");
+    }
+    assert.equal(getAIHubVideoReferenceError("Doubao-Seedance-2.0-mini-720p", { images: [], videos: [{ width: 1920, height: 1080 }], audios: [] }), "");
+    assert.throws(() => assertAIHubVideoReferences("Doubao-Seedance-2.0-mini-480p", { images: [], videos: [{ width: 1080, height: 1920 }], audios: [] }), /不能高于 480p.*1080×1920/);
 });
 
 test("图片文件大小和视频提示词要求由能力库统一判断", () => {

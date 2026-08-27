@@ -5,6 +5,7 @@ import { aiHubTaskContentId, aiHubTaskContentIds, aiHubTaskContentProxyUrl, aiHu
 import { classifyVideoPollingFailure, requestVideoContentCandidates, selectVideoPollId, withVideoResultTimeout } from "@/services/api/video-polling";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { getAIHubVideoCapability, normalizeAIHubVideoAspectRatio } from "@/lib/aihub-model-capabilities";
+import { assertAIHubVideoReferences } from "@/lib/aihub-reference-policy";
 import { isKIEGrokVideoModel } from "@/components/video-settings-panel";
 import { modelKey, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
 import { createDiagnosticRequestSnapshot } from "@/lib/diagnostic-log-safety";
@@ -381,6 +382,15 @@ async function createVideoRequestBody(config: AiConfig, model: string, prompt: s
 }
 
 async function createAIHubVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>, size: string | null, diagnosticTaskId?: string) {
+    assertAIHubVideoReferences(model, {
+        images: input.references,
+        videos: input.videoReferences,
+        audios: input.audioReferences,
+        firstFrame: input.firstFrame,
+        lastFrame: input.lastFrame,
+        resolution: normalizeVideoResolution(config.vquality),
+        aspectRatio: size || config.size || "",
+    });
     const references = await Promise.all(input.references.map((image, index) => resolveAIHubReferenceUrl(config, image, { diagnosticTaskId, kind: "image", index: index + 1 })));
     const firstFrame = input.firstFrame ? await resolveAIHubReferenceUrl(config, input.firstFrame, { diagnosticTaskId, kind: "first-frame", index: 1 }) : undefined;
     const lastFrame = input.lastFrame ? await resolveAIHubReferenceUrl(config, input.lastFrame, { diagnosticTaskId, kind: "last-frame", index: 1 }) : undefined;

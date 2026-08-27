@@ -9,7 +9,7 @@ registerHooks({
     },
 });
 
-const { buildCanvasImageReferencePolicy, buildCanvasVideoReferencePolicy, isCanvasVideoReferenceInputSupported, resolveCanvasVideoImageReferences } = await import("../src/app/(user)/canvas/utils/canvas-generation-reference-policy.ts");
+const { buildCanvasImageReferencePolicy, buildCanvasVideoReferencePolicy, isCanvasVideoReferenceInputSupported, resolveCanvasRetryVideoReferences, resolveCanvasVideoImageReferences } = await import("../src/app/(user)/canvas/utils/canvas-generation-reference-policy.ts");
 
 const image = { nodeId: "image", type: "image", title: "图片", image: { id: "image", name: "image.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" } } as const;
 const video = { nodeId: "video", type: "video", title: "视频", video: { id: "video", name: "video.mp4", type: "video/mp4", url: "data:video/mp4;base64,AA==" } } as const;
@@ -55,6 +55,19 @@ test("Doubao Seedance 参考音频需要搭配图片或视频", () => {
     assert.match(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-720p", [audio], "").error, /参考图或 1 个参考视频/);
     assert.equal(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-720p", [video, audio], "").error, "");
     assert.equal(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-720p", [image, audio], "").error, "");
+});
+
+test("画布在创建任务前拦截 Seedance mini 480p 的高分辨率参考视频", () => {
+    const highResolutionVideo = { ...video, video: { ...video.video, width: 1080, height: 1920 } };
+    assert.match(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-mini-480p", [highResolutionVideo], "").error, /不能高于 480p.*1080×1920/);
+    assert.equal(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-mini-480p", [{ ...video, video: { ...video.video, width: 480, height: 854 } }], "").error, "");
+});
+
+test("画布重试会在修改原节点前识别 Seedance 480p 素材错误", () => {
+    const rejected = resolveCanvasRetryVideoReferences("Doubao-Seedance-2.0-mini-480p", [], [{ ...video.video, width: 1080, height: 1920 }], []);
+    assert.match(rejected.error, /不能高于 480p.*1080×1920/);
+    const accepted = resolveCanvasRetryVideoReferences("Doubao-Seedance-2.0-mini-480p", [], [{ ...video.video, width: 480, height: 854 }], []);
+    assert.equal(accepted.error, "");
 });
 
 test("画布图片模式按能力库限制参考图", () => {

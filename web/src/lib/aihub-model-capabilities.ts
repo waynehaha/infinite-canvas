@@ -38,6 +38,7 @@ export type AIHubMediaCapability = {
     maxWidth?: number;
     maxHeight?: number;
     maxLongEdge?: number;
+    maxShortEdge?: number;
     minDurationMs?: number;
     maxDurationMs?: number;
     maxTotalDurationMs?: number;
@@ -339,7 +340,13 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
         resolution: { mode: "fixed" as const, value: model.toLowerCase().endsWith("480p") ? "480p" : model.toLowerCase().endsWith("1080p") ? "1080p" : "720p", label: model.toLowerCase().endsWith("480p") ? "480p" : model.toLowerCase().endsWith("1080p") ? "1080p" : "720p" },
         references: {
             images: { max: 9, note: "支持公网 URL 或 Base64" },
-            videos: { max: 3, maxDurationMs: 15_000, maxTotalDurationMs: 15_000, note: "仅支持公网 URL，总时长不能超过输出时长" },
+            videos: {
+                max: 3,
+                maxDurationMs: 15_000,
+                maxTotalDurationMs: 15_000,
+                ...(model === "Doubao-Seedance-2.0-mini-480p" || model === "Doubao-Seedance-2.0-480p" ? { maxShortEdge: 480 } : {}),
+                note: model === "Doubao-Seedance-2.0-mini-480p" || model === "Doubao-Seedance-2.0-480p" ? "仅支持公网 URL，总时长不能超过输出时长，短边不能超过 480px" : "仅支持公网 URL，总时长不能超过输出时长",
+            },
             audios: { max: 3, note: "不能单独使用，需搭配参考图或参考视频" },
             frames: { mode: "pair" as const, exclusive: true },
         },

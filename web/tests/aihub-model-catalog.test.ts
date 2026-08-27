@@ -21,6 +21,7 @@ test("内置模型配置可以导出并重新导入", () => {
     assert.equal(parsed.schemaVersion, 1);
     assert.ok(parsed.models.some((entry) => entry.model === "grok-imagine-video-6s"));
     assert.equal(parsed.models.find((entry) => entry.model === "Doubao-Seedance-2.0-mini-480p")?.requestProfile, "seedance-2.0-direct");
+    assert.equal(parsed.models.find((entry) => entry.model === "Doubao-Seedance-2.0-mini-480p")?.capability?.references?.videos?.maxShortEdge, 480);
 });
 
 test("模型配置拒绝密钥和重复模型", () => {
@@ -28,6 +29,9 @@ test("模型配置拒绝密钥和重复模型", () => {
     assert.throws(() => parseAIHubModelCatalog(JSON.stringify({ ...catalog, apiKey: "secret" })), /密钥/);
     const duplicate = { ...catalog, models: [...catalog.models, catalog.models[0]] };
     assert.throws(() => parseAIHubModelCatalog(JSON.stringify(duplicate)), /模型重复/);
+    const seedance = catalog.models.find((entry) => entry.model === "Doubao-Seedance-2.0-mini-480p");
+    assert.ok(seedance?.capability?.references?.videos);
+    assert.throws(() => parseAIHubModelCatalog(JSON.stringify({ ...catalog, models: catalog.models.map((entry) => entry === seedance ? { ...entry, capability: { ...entry.capability, references: { ...entry.capability?.references, videos: { ...entry.capability?.references?.videos, maxShortEdge: -1 } } } } : entry) })), /参考素材限制无效/);
 });
 
 test("导入配置后运行时能力和适配器立即生效", () => {

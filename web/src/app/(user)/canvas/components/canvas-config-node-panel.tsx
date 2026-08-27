@@ -54,6 +54,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputs, videoFrameOptio
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
     const canGenerate = (hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput)) && !referencePolicy?.error;
+    const referenceAlert = referencePolicy?.error ? referenceAlertContent(referencePolicy.error) : null;
 
     return (
         <div className="flex h-full w-full cursor-move flex-col px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
@@ -118,10 +119,13 @@ export function CanvasConfigNodePanel({ node, isRunning, inputs, videoFrameOptio
                 </button>
             </div>
 
-            {referencePolicy?.error ? (
-                <div role="alert" className="mb-2 flex min-w-0 items-center gap-1.5 text-[11px] leading-4" style={{ color: theme.node.muted }} title={referencePolicy.error}>
-                    <CircleAlert className="size-3.5 shrink-0" />
-                    <span className="truncate">{referencePolicy.error}</span>
+            {referenceAlert ? (
+                <div role="alert" className="mb-2 flex min-w-0 items-start gap-2 rounded-lg border border-red-500/25 bg-red-500/[0.07] px-2.5 py-2 text-red-700 dark:border-red-400/25 dark:bg-red-400/[0.08] dark:text-red-300" title={referencePolicy?.error}>
+                    <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+                    <div className="min-w-0">
+                        <div className="text-[11px] font-medium leading-4">{referenceAlert.title}</div>
+                        <div className="mt-0.5 text-[10px] leading-[14px] opacity-80">{referenceAlert.detail}</div>
+                    </div>
                 </div>
             ) : null}
 
@@ -162,6 +166,12 @@ export function CanvasConfigNodePanel({ node, isRunning, inputs, videoFrameOptio
 function normalizeCapabilityResolution(value: string) {
     const normalized = String(value || "").trim();
     return /p$/i.test(normalized) || /k$/i.test(normalized) ? normalized : `${normalized || "720"}p`;
+}
+
+function referenceAlertContent(error: string) {
+    const resolution = error.match(/^参考视频分辨率不能高于 (\d+)p（当前为 (\d+×\d+)）$/);
+    if (resolution) return { title: "参考视频分辨率过高", detail: `当前 ${resolution[2]}，480p 模型要求视频短边不超过 ${resolution[1]}px` };
+    return { title: "参考素材不符合当前模型要求", detail: error };
 }
 
 function InputChip({ label, value, style, unsupported = false }: { label: string; value: string; style: CSSProperties; unsupported?: boolean }) {
