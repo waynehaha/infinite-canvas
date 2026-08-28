@@ -24,6 +24,8 @@ test("内置模型配置可以导出并重新导入", () => {
     assert.equal(parsed.models.find((entry) => entry.model === "doubao-seedream-4-5")?.requestProfile, "image-seedream-json");
     assert.equal(parsed.models.find((entry) => entry.model === "gpt-image-2")?.requestProfile, "image-gpt-json");
     assert.equal(parsed.models.find((entry) => entry.model === "Doubao-Seedance-2.0-mini-480p")?.capability?.references?.videos?.maxShortEdge, 480);
+    assert.equal(parsed.models.find((entry) => entry.model === "Doubao-Seedance-2.0-mini-720p")?.capability?.references?.videos?.minFrameRate, 23.8);
+    assert.equal(parsed.models.find((entry) => entry.model === "Doubao-Seedance-2.0-mini-720p")?.capability?.references?.videos?.maxFrameRate, 60);
 });
 
 test("模型配置拒绝密钥和重复模型", () => {
@@ -34,6 +36,8 @@ test("模型配置拒绝密钥和重复模型", () => {
     const seedance = catalog.models.find((entry) => entry.model === "Doubao-Seedance-2.0-mini-480p");
     assert.ok(seedance?.capability?.references?.videos);
     assert.throws(() => parseAIHubModelCatalog(JSON.stringify({ ...catalog, models: catalog.models.map((entry) => entry === seedance ? { ...entry, capability: { ...entry.capability, references: { ...entry.capability?.references, videos: { ...entry.capability?.references?.videos, maxShortEdge: -1 } } } } : entry) })), /参考素材限制无效/);
+    assert.throws(() => parseAIHubModelCatalog(JSON.stringify({ ...catalog, models: catalog.models.map((entry) => entry === seedance ? { ...entry, capability: { ...entry.capability, references: { ...entry.capability?.references, videos: { ...entry.capability?.references?.videos, minFrameRate: 0 } } } } : entry) })), /参考素材限制无效/);
+    assert.throws(() => parseAIHubModelCatalog(JSON.stringify({ ...catalog, models: catalog.models.map((entry) => entry === seedance ? { ...entry, capability: { ...entry.capability, references: { ...entry.capability?.references, videos: { ...entry.capability?.references?.videos, minFrameRate: 61, maxFrameRate: 60 } } } } : entry) })), /帧率范围无效/);
 });
 
 test("导入配置后运行时能力和适配器立即生效", () => {

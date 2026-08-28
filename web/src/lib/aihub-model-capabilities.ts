@@ -42,6 +42,8 @@ export type AIHubMediaCapability = {
     minDurationMs?: number;
     maxDurationMs?: number;
     maxTotalDurationMs?: number;
+    minFrameRate?: number;
+    maxFrameRate?: number;
     localOnly?: boolean;
     required?: number;
     note?: string;
@@ -346,8 +348,10 @@ const videoCapabilities: readonly AIHubVideoCapability[] = [
                 max: 3,
                 maxDurationMs: 15_000,
                 maxTotalDurationMs: 15_000,
+                minFrameRate: 23.8,
+                maxFrameRate: 60,
                 ...(model === "Doubao-Seedance-2.0-mini-480p" || model === "Doubao-Seedance-2.0-480p" ? { maxShortEdge: 480 } : {}),
-                note: model === "Doubao-Seedance-2.0-mini-480p" || model === "Doubao-Seedance-2.0-480p" ? "仅支持公网 URL，总时长不能超过输出时长，短边不能超过 480px" : "仅支持公网 URL，总时长不能超过输出时长",
+                note: model === "Doubao-Seedance-2.0-mini-480p" || model === "Doubao-Seedance-2.0-480p" ? "仅支持公网 URL，总时长不能超过输出时长，平均帧率 23.8–60 FPS，短边不能超过 480px" : "仅支持公网 URL，总时长不能超过输出时长，平均帧率 23.8–60 FPS",
             },
             audios: { max: 3, note: "不能单独使用，需搭配参考图或参考视频" },
             frames: { mode: "pair" as const, exclusive: true },

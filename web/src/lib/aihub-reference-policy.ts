@@ -5,6 +5,7 @@ export type AIHubReferenceLike = {
     width?: number;
     height?: number;
     durationMs?: number;
+    frameRate?: number;
     dataUrl?: string;
     url?: string;
     storageKey?: string;
@@ -31,7 +32,7 @@ export function getAIHubVideoReferenceError(model: string, selection: AIHubVideo
 
     const errors = [
         mediaError(capability.model, "参考图", selection.images, capability.references?.images, getAIHubVideoImageLimit(model, selection.resolution)),
-        mediaError(capability.model, "参考视频", selection.videos, capability.references?.videos),
+        mediaError(capability.model, "参考视频", selection.videos, videoLimit(capability.model, capability.references?.videos)),
         mediaError(capability.model, "参考音频", selection.audios, capability.references?.audios),
     ].filter(Boolean);
     const hasFirstFrame = Boolean(selection.firstFrame);
@@ -57,6 +58,11 @@ export function getAIHubVideoReferenceError(model: string, selection: AIHubVideo
     }
 
     return errors.join("；");
+}
+
+function videoLimit(model: string, limit: AIHubMediaCapability | undefined) {
+    if (!model.toLowerCase().startsWith("doubao-seedance-2.0-") || !limit) return limit;
+    return { ...limit, minFrameRate: limit.minFrameRate ?? 23.8, maxFrameRate: limit.maxFrameRate ?? 60 };
 }
 
 export function assertAIHubVideoReferences(model: string, selection: AIHubVideoReferenceSelection) {
@@ -88,12 +94,19 @@ function mediaError(model: string, label: string, values: AIHubReferenceLike[], 
         if (limit.maxShortEdge && value.width && value.height && Math.min(value.width, value.height) > limit.maxShortEdge) return `${label}分辨率不能高于 ${limit.maxShortEdge}p（当前为 ${value.width}×${value.height}）`;
         if (limit.minDurationMs && value.durationMs && value.durationMs < limit.minDurationMs) return `${label}时长不能少于 ${formatSeconds(limit.minDurationMs)}`;
         if (limit.maxDurationMs && value.durationMs && value.durationMs > limit.maxDurationMs) return `${label}时长不能超过 ${formatSeconds(limit.maxDurationMs)}`;
+        if (label === "参考视频" && limit.minFrameRate && typeof value.frameRate === "number" && value.frameRate < limit.minFrameRate) return frameRateError(value.frameRate, limit.minFrameRate, limit.maxFrameRate);
+        if (label === "参考视频" && limit.maxFrameRate && typeof value.frameRate === "number" && value.frameRate > limit.maxFrameRate) return frameRateError(value.frameRate, limit.minFrameRate, limit.maxFrameRate);
     }
     if (limit.maxTotalDurationMs) {
         const totalDuration = values.reduce((sum, value) => sum + (value.durationMs || 0), 0);
         if (totalDuration > limit.maxTotalDurationMs) return `${label}总时长不能超过 ${formatSeconds(limit.maxTotalDurationMs)}`;
     }
     return "";
+}
+
+function frameRateError(frameRate: number, minimum?: number, maximum?: number) {
+    const range = minimum && maximum ? `${minimum}～${maximum} FPS` : minimum ? `不低于 ${minimum} FPS` : `不高于 ${maximum} FPS`;
+    return `参考视频帧率不符合要求：当前平均帧率为 ${frameRate} FPS，模型要求 ${range}。请将视频转换为恒定 24、25 或 30 FPS 后重新上传`;
 }
 
 function referenceBytes(reference: AIHubReferenceLike) {

@@ -320,9 +320,10 @@ function validateReferences(value: unknown, model: string) {
     for (const limit of Object.values(value)) {
         if (!isRecord(limit)) continue;
         if (limit.max !== undefined && (typeof limit.max !== "number" || limit.max < 0 || limit.max > 100)) throw new Error(`模型 ${model} 的参考素材数量无效`);
-        for (const key of ["maxBytes", "maxTotalBytes", "minWidth", "minHeight", "maxWidth", "maxHeight", "maxLongEdge", "maxShortEdge", "minDurationMs", "maxDurationMs", "maxTotalDurationMs"] as const) {
+        for (const key of ["maxBytes", "maxTotalBytes", "minWidth", "minHeight", "maxWidth", "maxHeight", "maxLongEdge", "maxShortEdge", "minDurationMs", "maxDurationMs", "maxTotalDurationMs", "minFrameRate", "maxFrameRate"] as const) {
             if (limit[key] !== undefined && (typeof limit[key] !== "number" || !Number.isFinite(limit[key]) || limit[key] <= 0)) throw new Error(`模型 ${model} 的参考素材限制无效`);
         }
+        if (typeof limit.minFrameRate === "number" && typeof limit.maxFrameRate === "number" && limit.minFrameRate > limit.maxFrameRate) throw new Error(`模型 ${model} 的参考素材帧率范围无效`);
     }
 }
 

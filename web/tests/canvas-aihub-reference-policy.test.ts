@@ -70,6 +70,13 @@ test("画布重试会在修改原节点前识别 Seedance 480p 素材错误", ()
     assert.equal(accepted.error, "");
 });
 
+test("画布首次生成和重试都会拦截 Seedance 异常平均帧率", () => {
+    const lowFrameRateVideo = { ...video, video: { ...video.video, frameRate: 20.061 } };
+    assert.match(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-mini-720p", [lowFrameRateVideo], "").error, /当前平均帧率为 20\.061 FPS/);
+    assert.match(resolveCanvasRetryVideoReferences("Doubao-Seedance-2.0-mini-720p", [], [lowFrameRateVideo.video], []).error, /23\.8～60 FPS/);
+    assert.equal(buildCanvasVideoReferencePolicy("Doubao-Seedance-2.0-mini-720p", [{ ...video, video: { ...video.video, frameRate: 30 } }], "").error, "");
+});
+
 test("画布图片模式按能力库限制参考图", () => {
     assert.match(buildCanvasImageReferencePolicy("gemini-3.1-flash-image-4k", [image], "").error, /不支持参考图/);
     const references = Array.from({ length: 7 }, (_, index) => ({ ...image, nodeId: `image-${index}` }));

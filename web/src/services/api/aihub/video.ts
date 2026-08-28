@@ -258,6 +258,10 @@ export function aiHubVideoFailureMessage(model: string, message: string) {
     if (/cannot unmarshal string into Go struct field .*images.*\[\]string|invalid request body must be valid json/i.test(normalized)) {
         return "多张参考图的参数格式不正确，请重新生成";
     }
+    const frameRateRange = normalized.match(/frame rate must be between\s*([\d.]+)\s*FPS\s*and\s*([\d.]+)\s*FPS/i);
+    if (frameRateRange) {
+        return `参考视频帧率不符合要求，模型要求 ${frameRateRange[1]}～${frameRateRange[2]} FPS。请将视频转换为恒定 24、25 或 30 FPS 后重新上传；直接重试通常无效`;
+    }
     if (
         /(?:bad_reference_image|reference image|image reference|input image|uploaded image)/i.test(normalized) &&
         /protected IP|identifiable real person|third-party content providers|content (?:policy|safety)|safety (?:policy|filter)|refus(?:e|ed|al)/i.test(normalized)

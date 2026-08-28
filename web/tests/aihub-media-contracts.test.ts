@@ -13,7 +13,7 @@ const { AIHUB_DEFAULT_MODELS, aihubModelCapability } = await import("../src/lib/
 const { AIHUB_MODEL_CAPABILITIES, getAIHubModelCapability, getAIHubVideoImageLimit, normalizeAIHubRangeValue, normalizeAIHubSelectValue } = await import("../src/lib/aihub-model-capabilities.ts");
 const { createAIHubChatImageBody, createAIHubImageEditForm, createAIHubImageGenerationBody, extractAIHubChatImageUrls, getAIHubImageRequestEndpoint, isAIHubMultipartImageEdit } = await import("../src/services/api/aihub/image.ts");
 const { aiHubMediaUploadFailureMessage, aiHubResponseDiagnostics, resolveAIHubReferenceUrl } = await import("../src/services/api/aihub/media.ts");
-const { createAIHubVideoBody } = await import("../src/services/api/aihub/video.ts");
+const { aiHubVideoFailureMessage, createAIHubVideoBody } = await import("../src/services/api/aihub/video.ts");
 const { assertAIHubVideoReferences, getAIHubImageReferenceError, getAIHubVideoReferenceError, isAIHubVideoPromptRequired } = await import("../src/lib/aihub-reference-policy.ts");
 const { getVideoPromptLengthHint, videoPromptLengthHintText } = await import("../src/lib/video-prompt-length-hint.ts");
 
@@ -395,6 +395,25 @@ test("Seedance 480p 在提交前拦截高分辨率参考视频", () => {
     }
     assert.equal(getAIHubVideoReferenceError("Doubao-Seedance-2.0-mini-720p", { images: [], videos: [{ width: 1920, height: 1080 }], audios: [] }), "");
     assert.throws(() => assertAIHubVideoReferences("Doubao-Seedance-2.0-mini-480p", { images: [], videos: [{ width: 1080, height: 1920 }], audios: [] }), /不能高于 480p.*1080×1920/);
+});
+
+test("Doubao Seedance 2.0 在提交前拦截参考视频异常平均帧率", () => {
+    const model = "Doubao-Seedance-2.0-mini-720p";
+    const selection = (frameRate?: number) => ({ images: [], videos: [{ frameRate }], audios: [] });
+    assert.match(getAIHubVideoReferenceError(model, selection(20.061)), /当前平均帧率为 20\.061 FPS.*23\.8～60 FPS.*恒定 24、25 或 30 FPS/);
+    assert.equal(getAIHubVideoReferenceError(model, selection(23.8)), "");
+    assert.equal(getAIHubVideoReferenceError(model, selection(30)), "");
+    assert.equal(getAIHubVideoReferenceError(model, selection(60)), "");
+    assert.match(getAIHubVideoReferenceError(model, selection(60.001)), /当前平均帧率为 60\.001 FPS/);
+    assert.equal(getAIHubVideoReferenceError(model, selection()), "");
+});
+
+test("Seedance 帧率转换错误会解包为用户可理解的中文", () => {
+    const nested = '{"code":"fail_to_fetch_task","message":"{\\"error\\":{\\"code\\":\\"400\\",\\"message\\":\\"素材转换失败: Frame rate must be between 23.8 FPS and 60 FPS.\\",\\"type\\":\\"api_error\\"}}","data":null}';
+    assert.equal(
+        aiHubVideoFailureMessage("Doubao-Seedance-2.0-mini-720p", nested),
+        "参考视频帧率不符合要求，模型要求 23.8～60 FPS。请将视频转换为恒定 24、25 或 30 FPS 后重新上传；直接重试通常无效",
+    );
 });
 
 test("图片文件大小和视频提示词要求由能力库统一判断", () => {

@@ -177,7 +177,8 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         if (typeof created.progress === "number") onProgress?.(created.progress, created);
         return { task: created, pollId: videoPollId(model, created), startedAt, requestBody: body };
     } catch (error) {
-        const { message, detail } = readAxiosError(error, "视频生成失败");
+        const { message: rawMessage, detail } = readAxiosError(error, "视频生成失败");
+        const message = isAIHubConfig({ ...config, model, videoModel: model }) ? aiHubVideoFailureMessage(model, rawMessage) : rawMessage;
         appendDiagnosticEvent(createOptions.diagnosticTaskId, {
             stage: "request",
             status: "failed",
