@@ -12,7 +12,7 @@ registerHooks({
 const { AIHUB_DEFAULT_MODELS, aihubModelCapability } = await import("../src/lib/aihub-models.ts");
 const { AIHUB_MODEL_CAPABILITIES, getAIHubModelCapability, getAIHubVideoImageLimit, normalizeAIHubRangeValue, normalizeAIHubSelectValue } = await import("../src/lib/aihub-model-capabilities.ts");
 const { createAIHubChatImageBody, createAIHubImageEditForm, createAIHubImageGenerationBody, extractAIHubChatImageUrls, getAIHubImageRequestEndpoint, isAIHubMultipartImageEdit } = await import("../src/services/api/aihub/image.ts");
-const { aiHubMediaUploadFailureMessage, resolveAIHubReferenceUrl } = await import("../src/services/api/aihub/media.ts");
+const { aiHubMediaUploadFailureMessage, aiHubResponseDiagnostics, resolveAIHubReferenceUrl } = await import("../src/services/api/aihub/media.ts");
 const { createAIHubVideoBody } = await import("../src/services/api/aihub/video.ts");
 const { assertAIHubVideoReferences, getAIHubImageReferenceError, getAIHubVideoReferenceError, isAIHubVideoPromptRequired } = await import("../src/lib/aihub-reference-policy.ts");
 const { getVideoPromptLengthHint, videoPromptLengthHintText } = await import("../src/lib/video-prompt-length-hint.ts");
@@ -35,6 +35,51 @@ test("AIHub 参考素材上传错误会标明具体失败阶段", () => {
     assert.equal(aiHubMediaUploadFailureMessage("upload", new Error("Failed to fetch")), "参考素材文件直传网络失败：Failed to fetch");
     assert.equal(aiHubMediaUploadFailureMessage("complete", new Error("Failed to fetch")), "参考素材上传完成确认网络失败：Failed to fetch");
     assert.equal(aiHubMediaUploadFailureMessage("upload", new Error("HTTP 403")), "参考素材文件直传失败：HTTP 403");
+});
+
+test("AIHub 429 响应会记录限流信息并隐藏敏感字段", () => {
+    const body = '{"message":"too many requests","token":"secret-token-value"}';
+    const response = new Response(body, {
+        status: 429,
+        headers: { "Content-Type": "application/json; charset=utf-8", "Retry-After": "60", "X-Request-ID": "request-123" },
+    });
+    assert.deepEqual(aiHubResponseDiagnostics(response, body), {
+        responseMimeType: "application/json",
+        responseFormat: "json",
+        responseBytes: new TextEncoder().encode(body).length,
+        responsePreview: '{"message":"too many requests","token":"[已隐藏]"}',
+        retryAfter: "60",
+        requestId: "request-123",
+        rateLimited: true,
+    });
+});
+
+test("AIHub 非 JSON 429 会显示素材服务限流而不是数据格式错误", async () => {
+    const originalFetch = globalThis.fetch;
+    const model = "omni-fast";
+    const config = {
+        channelMode: "local",
+        model,
+        videoModel: model,
+        activeChannelId: "aihub",
+        videoChannelId: "aihub",
+        baseUrl: "https://aihubcc.cc/v1",
+        apiKey: "test-key",
+        localChannels: [{ id: "aihub", name: "AIHub", baseUrl: "https://aihubcc.cc/v1", apiKey: "test-key", models: [model] }],
+    } as never;
+    const reference = { id: "image-1", name: "reference.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" };
+    try {
+        globalThis.fetch = async (input, init) => {
+            const url = String(input);
+            if (url.startsWith("data:")) return originalFetch(input, init);
+            if (url.endsWith("/media/upload")) return Response.json({ data: { media_id: "media-1", upload_url: "https://upload.example.com/file" } });
+            if (url === "https://upload.example.com/file") return new Response(null, { status: 200 });
+            return new Response("Too Many Requests", { status: 429, headers: { "Retry-After": "60" } });
+        };
+        await assert.rejects(resolveAIHubReferenceUrl(config, reference), /素材服务请求过于频繁（HTTP 429，建议 60 秒后重试）/);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
 });
 
 test("AIHub 本地素材上传会保留实际失败步骤", async () => {
@@ -262,7 +307,6 @@ test("Gemini 图片协议不会发送未公开的数量和质量字段", () => {
         size: "1024x1824",
     });
 });
-
 test("Gemini 4K Chat 图片模型只发送文本并拒绝未开放的参考图", () => {
     assert.deepEqual(createAIHubChatImageBody("gemini-3.1-flash-image-4k", "生成", []), {
         model: "gemini-3.1-flash-image-4k",

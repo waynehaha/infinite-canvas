@@ -1,5 +1,6 @@
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
+import { sanitizeDiagnosticText, sanitizeDiagnosticValue } from "@/lib/diagnostic-log-safety";
 import { AIHUB_BASE_URL, buildApiUrl, channelIdForActiveModel, localChannelForActiveModel, type AiConfig } from "@/stores/use-config-store";
 import { shouldUseAccountProxy } from "@/lib/user-auth-mode";
 import { appendDiagnosticEvent, type DiagnosticReferenceKind } from "@/services/diagnostic-log";
@@ -11,6 +12,7 @@ type ReferenceMedia = ReferenceImage | ReferenceVideo | ReferenceAudio;
 type MediaUploadResponse = { success?: boolean; data?: { media_id: string; upload_url: string; upload_headers?: Record<string, string> } };
 type MediaCompleteResponse = { success?: boolean; message?: string; data?: { content_url?: string } };
 type InitializedMediaUpload = { data: { media_id: string; upload_url: string; upload_headers?: Record<string, string> } };
+type AIHubResponseDiagnostics = { responseMimeType?: string; responseFormat: "json" | "html" | "text" | "empty"; responseBytes: number; responsePreview?: string; retryAfter?: string; requestId?: string; rateLimited: boolean };
 export type AIHubMediaUploadStage = "read" | "authorize" | "upload" | "complete";
 export type AIHubMediaDiagnosticOptions = { diagnosticTaskId?: string; kind?: DiagnosticReferenceKind; index?: number };
 
@@ -20,6 +22,16 @@ const mediaUploadStageLabels: Record<AIHubMediaUploadStage, string> = {
     upload: "参考素材文件直传",
     complete: "参考素材上传完成确认",
 };
+let activeCompleteRequests = 0;
+
+class AIHubResponseError extends Error {
+    readonly diagnostics: AIHubResponseDiagnostics;
+
+    constructor(message: string, diagnostics: AIHubResponseDiagnostics) {
+        super(message);
+        this.diagnostics = diagnostics;
+    }
+}
 
 function apiUrl(config: AiConfig, path: string) {
     const token = useUserStore.getState().token;
@@ -27,13 +39,57 @@ function apiUrl(config: AiConfig, path: string) {
     return buildApiUrl(localChannelForActiveModel(config)?.baseUrl || config.baseUrl, path);
 }
 
-async function parseAIHubJson<T>(response: Response): Promise<T> {
-    const text = await response.text();
+function safeResponsePreview(text: string) {
+    if (!text.trim()) return undefined;
     try {
-        return JSON.parse(text) as T;
+        return JSON.stringify(sanitizeDiagnosticValue(JSON.parse(text), false)).slice(0, 500);
     } catch {
-        if (/^\s*</.test(text)) throw new Error(`接口返回了网页内容，请确认 AIHub Base URL 为 ${AIHUB_BASE_URL}`);
-        throw new Error(`接口返回的数据格式不正确（HTTP ${response.status}）`);
+        return sanitizeDiagnosticText(text).replace(/\s+/g, " ").trim().slice(0, 500);
+    }
+}
+
+export function aiHubResponseDiagnostics(response: Response, text: string): AIHubResponseDiagnostics {
+    const responseMimeType = response.headers.get("content-type")?.split(";", 1)[0]?.trim() || undefined;
+    const preview = safeResponsePreview(text);
+    const requestId = ["x-request-id", "x-trace-id", "cf-ray"].map((name) => response.headers.get(name)).find(Boolean);
+    let responseFormat: AIHubResponseDiagnostics["responseFormat"] = "empty";
+    if (text.trim()) {
+        if (/^\s*</.test(text)) responseFormat = "html";
+        else {
+            try {
+                JSON.parse(text);
+                responseFormat = "json";
+            } catch {
+                responseFormat = "text";
+            }
+        }
+    }
+    return {
+        responseMimeType,
+        responseFormat,
+        responseBytes: new TextEncoder().encode(text).length,
+        ...(preview ? { responsePreview: preview } : {}),
+        ...(response.headers.get("retry-after") ? { retryAfter: response.headers.get("retry-after")! } : {}),
+        ...(requestId ? { requestId } : {}),
+        rateLimited: response.status === 429,
+    };
+}
+
+function rateLimitMessage(diagnostics: AIHubResponseDiagnostics) {
+    const value = diagnostics.retryAfter;
+    const wait = value ? `，建议 ${/^\d+$/.test(value) ? `${value} 秒` : value}后重试` : "";
+    return `素材服务请求过于频繁（HTTP 429${wait}）`;
+}
+
+async function parseAIHubJson<T>(response: Response): Promise<{ payload: T; diagnostics: AIHubResponseDiagnostics }> {
+    const text = await response.text();
+    const diagnostics = aiHubResponseDiagnostics(response, text);
+    try {
+        return { payload: JSON.parse(text) as T, diagnostics };
+    } catch {
+        if (response.status === 429) throw new AIHubResponseError(rateLimitMessage(diagnostics), diagnostics);
+        if (/^\s*</.test(text)) throw new AIHubResponseError(`接口返回了网页内容，请确认 AIHub Base URL 为 ${AIHUB_BASE_URL}`, diagnostics);
+        throw new AIHubResponseError(`接口返回的数据格式不正确（HTTP ${response.status}）`, diagnostics);
     }
 }
 
@@ -95,12 +151,13 @@ function diagnosticData(options: AIHubMediaDiagnosticOptions, extra: Record<stri
 
 function mediaUploadFailure(stage: AIHubMediaUploadStage, error: unknown, options: AIHubMediaDiagnosticOptions, startedAt: number, data: Record<string, unknown> = {}) {
     const message = aiHubMediaUploadFailureMessage(stage, error);
+    const responseData = error instanceof AIHubResponseError ? error.diagnostics : {};
     appendDiagnosticEvent(options.diagnosticTaskId, {
         stage: "reference",
         status: "failed",
         title: `${mediaUploadStageLabels[stage]}失败`,
         detail: message,
-        data: diagnosticData(options, { step: stage, durationMs: Date.now() - startedAt, ...data }),
+        data: diagnosticData(options, { step: stage, durationMs: Date.now() - startedAt, ...responseData, ...data }),
     });
     return new Error(message);
 }
@@ -133,8 +190,10 @@ export async function resolveAIHubReferenceUrl(config: AiConfig, reference: Refe
             body: JSON.stringify({ file_name: reference.name || "reference", content_type: contentType, bytes: blob.size }),
         });
         authorizeStatus = response.status;
-        const payload = await parseAIHubJson<MediaUploadResponse>(response);
-        if (!response.ok || !payload.data?.media_id || !payload.data.upload_url) throw new Error(`HTTP ${response.status}，接口未返回有效上传信息`);
+        const { payload, diagnostics } = await parseAIHubJson<MediaUploadResponse>(response);
+        if (!response.ok || !payload.data?.media_id || !payload.data.upload_url) {
+            throw new AIHubResponseError(response.status === 429 ? rateLimitMessage(diagnostics) : `HTTP ${response.status}，接口未返回有效上传信息`, diagnostics);
+        }
         initialized = payload as InitializedMediaUpload;
         appendDiagnosticEvent(options.diagnosticTaskId, {
             stage: "reference",
@@ -164,23 +223,27 @@ export async function resolveAIHubReferenceUrl(config: AiConfig, reference: Refe
 
     const completeStartedAt = Date.now();
     let completeStatus = 0;
+    activeCompleteRequests += 1;
+    const concurrentCompleteRequests = activeCompleteRequests;
     try {
         const response = await fetch(apiUrl(config, `/media/${encodeURIComponent(initialized.data.media_id)}/complete`), { method: "POST", headers: authHeaders(config) });
         completeStatus = response.status;
-        const result = await parseAIHubJson<MediaCompleteResponse>(response);
+        const { payload: result, diagnostics } = await parseAIHubJson<MediaCompleteResponse>(response);
         if (!response.ok || !result.data?.content_url) {
-            const detail = typeof result.message === "string" && result.message.trim() ? result.message.trim() : `HTTP ${response.status}，接口未返回素材地址`;
-            throw new Error(detail);
+            const detail = response.status === 429 ? rateLimitMessage(diagnostics) : typeof result.message === "string" && result.message.trim() ? result.message.trim() : `HTTP ${response.status}，接口未返回素材地址`;
+            throw new AIHubResponseError(detail, diagnostics);
         }
         appendDiagnosticEvent(options.diagnosticTaskId, {
             stage: "reference",
             status: "success",
             title: "参考素材上传完成",
-            data: diagnosticData(options, { step: "complete", httpStatus: response.status, durationMs: Date.now() - completeStartedAt, ...baseData }),
+            data: diagnosticData(options, { step: "complete", httpStatus: response.status, durationMs: Date.now() - completeStartedAt, concurrentCompleteRequests, ...diagnostics, ...baseData }),
         });
         return result.data.content_url;
     } catch (error) {
-        throw mediaUploadFailure("complete", error, options, completeStartedAt, { httpStatus: completeStatus, ...baseData });
+        throw mediaUploadFailure("complete", error, options, completeStartedAt, { httpStatus: completeStatus, concurrentCompleteRequests, ...baseData });
+    } finally {
+        activeCompleteRequests = Math.max(0, activeCompleteRequests - 1);
     }
 }
 

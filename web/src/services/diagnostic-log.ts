@@ -326,12 +326,14 @@ export async function createDiagnosticExport(taskId: string) {
     const tasks = await listDiagnosticTasks();
     const task = tasks.find((item) => item.id === taskId);
     if (!task) throw new Error("找不到所选诊断任务");
-    const nearby = tasks
-        .filter((item) => diagnosticTaskScope(item).id === diagnosticTaskScope(task).id && item.id !== task.id)
-        .slice(0, 4)
-        .map(taskSummary);
+    const sameScopeTasks = tasks.filter((item) => diagnosticTaskScope(item).id === diagnosticTaskScope(task).id && item.id !== task.id);
+    const nearby = sameScopeTasks.slice(0, 4).map((item) => ({ ...taskSummary(item), createdOffsetMs: item.createdAt - task.createdAt }));
+    const submissionContext = {
+        sameScopeTaskCountWithin10Seconds: sameScopeTasks.filter((item) => Math.abs(item.createdAt - task.createdAt) <= 10_000).length,
+        sameScopeTaskCountWithin60Seconds: sameScopeTasks.filter((item) => Math.abs(item.createdAt - task.createdAt) <= 60_000).length,
+    };
     const safeTask = sanitizeDiagnosticValue({ ...task, prompt: task.prompt }, true);
-    const timeline = { task: safeTask, nearbyTasks: sanitizeDiagnosticValue(nearby, false) };
+    const timeline = { task: safeTask, submissionContext, nearbyTasks: sanitizeDiagnosticValue(nearby, false) };
     const environment = sanitizeDiagnosticValue(
         {
             appVersion: APP_VERSION,
